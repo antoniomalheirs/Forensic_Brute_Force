@@ -139,7 +139,7 @@ void SHA512::update(const unsigned char *message, unsigned int len) {
   unsigned int new_len, rem_len, tmp_len;
   const unsigned char *shifted_message;
 
-  tmp_len = SHA512_BLOCK_SIZE - m_len;
+  tmp_len = (unsigned int)(SHA512_BLOCK_SIZE - m_len);
   rem_len = len < tmp_len ? len : tmp_len;
 
   memcpy(&m_block[m_len], message, rem_len);
@@ -162,7 +162,7 @@ void SHA512::update(const unsigned char *message, unsigned int len) {
   memcpy(m_block, &shifted_message[block_nb << 7], rem_len);
 
   m_len = rem_len;
-  m_tot_len += (block_nb + 1) << 7;
+  m_tot_len += ((uint64)block_nb + 1) << 7;
 }
 
 void SHA512::final(unsigned char *digest) {
@@ -172,7 +172,7 @@ void SHA512::final(unsigned char *digest) {
 
   block_nb = (1 + ((SHA512_BLOCK_SIZE - 9) < (m_len % SHA512_BLOCK_SIZE)));
 
-  len_b = (m_tot_len + m_len) << 3;
+  len_b = (unsigned int)((m_tot_len + m_len) << 3);
   pm_len = block_nb << 7;
 
   memset(m_block + m_len, 0, pm_len - m_len);

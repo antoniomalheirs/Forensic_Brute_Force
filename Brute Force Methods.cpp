@@ -456,9 +456,8 @@ void logSuccess(const std::string &password, const std::string &target,
          "****************************************************************"
       << "\x1b[0m\n\n";
 
-  // Save to project directory (absolute path)
-  const std::string savePath = "C:\\Users\\Zeca\\Desktop\\RestoreFiles\\Brute_"
-                               "Force_Methods\\cracked_passwords.txt";
+  // Save to project directory (relative path — portable)
+  const std::string savePath = "cracked_passwords.txt";
 
   std::ofstream log(savePath, std::ios::app);
   if (log.is_open()) {
@@ -468,16 +467,7 @@ void logSuccess(const std::string &password, const std::string &target,
     log.close();
     std::cout << "\x1b[1;32m[i] SALVO EM: " << savePath << "\x1b[0m\n";
   } else {
-    std::ofstream localLog("cracked_passwords.txt", std::ios::app);
-    if (localLog.is_open()) {
-      std::string safeSalt = salt.empty() ? "-" : salt;
-      localLog << target << " | " << safeSalt << " | " << password << "\n";
-      localLog.close();
-      std::cout
-          << "\x1b[1;33m[!] SALVO LOCALMENTE: cracked_passwords.txt\x1b[0m\n";
-    } else {
-      std::cout << "\x1b[1;31m[!] ERRO CRITICO DE ESCRITA\x1b[0m\n";
-    }
+    std::cout << "\x1b[1;31m[!] ERRO CRITICO DE ESCRITA\x1b[0m\n";
   }
 }
 
@@ -514,9 +504,13 @@ std::vector<std::string> generateMutations(const std::string &base) {
 // Helper to load salts
 std::vector<std::string> loadSalts(const Config &config) {
   std::vector<std::string> salts;
-  if (config.type >= HashType::SALTED_MD5 &&
-          config.type <= HashType::SALTED_SHA512 ||
-      config.type == HashType::WPA2_PBKDF2) {
+  if ((config.type >= HashType::SALTED_MD5 &&
+       config.type <= HashType::SALTED_SHA512) ||
+      config.type == HashType::WPA2_PBKDF2 ||
+      config.type == HashType::WPA3_SAE || config.type == HashType::BCRYPT ||
+      config.type == HashType::SCRYPT || config.type == HashType::SOCIAL_FB ||
+      config.type == HashType::SOCIAL_IG ||
+      config.type == HashType::SOCIAL_TW) {
     if (!config.salt.empty()) {
       salts.push_back(config.salt); // Single salt mode
     } else {
@@ -811,10 +805,6 @@ bool runParallelBruteForce(const Config &config) {
     }
   }
 
-  auto end = std::chrono::high_resolution_clock::now();
-  auto duration =
-      std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-
   if (found) {
     auto end = std::chrono::high_resolution_clock::now();
     auto duration =
@@ -946,12 +936,19 @@ void runAllTests() {
   const std::string testCharset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
   const int testMaxLen = 6; // Increased to cover up to 6 chars
 
+  // Use modern PRNG for better randomness in forensic test vectors
+  std::random_device rd;
+  std::mt19937 rng(rd());
+
   // Random string helper
   auto randomStr = [&](int minLen, int maxLen) -> std::string {
-    int len = minLen + (rand() % (maxLen - minLen + 1));
+    std::uniform_int_distribution<int> lenDist(minLen, maxLen);
+    int len = lenDist(rng);
+    std::uniform_int_distribution<int> charDist(0,
+                                                (int)testCharset.length() - 1);
     std::string s;
     for (int i = 0; i < len; ++i) {
-      s += testCharset[rand() % testCharset.length()];
+      s += testCharset[charDist(rng)];
     }
     return s;
   };
@@ -964,7 +961,6 @@ void runAllTests() {
   };
 
   std::vector<TestCase> tests;
-  srand((unsigned int)time(0)); // Seed random
 
   // 1. Basic Hashes (Unsalted) - Pass: 4-6 chars
   tests.push_back({HashType::MD5, randomStr(3, 5), "", "BASICO"});
@@ -1333,6 +1329,8 @@ int main() {
         std::cout << "Insira o Hash Alvo: ";
         std::cin >> config.target;
         config.targetHash = config.target; // SYNC FOR OPENCL (CRITICAL FIX)
+        config.hashType =
+            getKernelAlgoId(config.type); // SYNC hashType for OpenCL kernel
         std::cout
             << "Insira o Salt (Deixe vazio/hifen para usar 'saltlist.txt'): ";
         std::cin >> config.salt;
@@ -1349,6 +1347,9 @@ int main() {
       config.maxLength = 16;             // FORCE LIMIT FOR LIVE MODE
 
       config.type = identifyHash(config.target);
+      config.hashType = getKernelAlgoId(
+          config
+              .type); // SYNC hashType for OpenCL kernel (AFTER type detection!)
       std::cout << "[i] Tipo detectado: " << hashTypeName(config.type) << "\n";
 
       if (config.type == HashType::UNKNOWN) {
@@ -1392,12 +1393,12 @@ int main() {
             << "Usar Dicionario (wordlist.txt) primeiro? (1=Sim, 0=Nao): ";
         int d;
         if (std::cin >> d) {
-          bool found = false;
+          bool dictFound = false;
           if (d == 1) {
-            found = dictionaryAttack(config);
+            dictFound = dictionaryAttack(config);
           }
 
-          if (!found) {
+          if (!dictFound) {
             std::cout << "Deseja iniciar Forca Bruta? (1=Sim, 0=Nao): ";
             int b;
             if (std::cin >> b && b == 1)

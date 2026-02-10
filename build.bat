@@ -20,9 +20,13 @@ if %errorlevel% neq 0 (
 :: Compile C++ Host Code
 echo [CPP] Compiling Host Code...
 cl.exe /EHsc /c "Brute Force Methods.cpp" /Fo:"Brute Force Methods.obj" /I"%CUDA_PATH%\include"
+if %errorlevel% neq 0 (
+    echo [ERROR] Host Code Compilation Failed!
+    exit /b 1
+)
 cl.exe /EHsc /c "opencl_kernels.cpp" /Fo:"opencl_kernels.obj" /I"%CUDA_PATH%\include"
 if %errorlevel% neq 0 (
-    echo [ERROR] CL Compilation Failed!
+    echo [ERROR] OpenCL Kernels Compilation Failed!
     exit /b 1
 )
 
