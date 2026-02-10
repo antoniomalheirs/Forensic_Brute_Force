@@ -1111,10 +1111,348 @@ void runAllTests() {
   std::cin.get();
 }
 
+// === CLI HELPER FUNCTIONS ===
+
+std::string cliGetArgValue(int argc, char *argv[], const std::string &flag) {
+  for (int i = 0; i < argc - 1; i++) {
+    std::string arg = argv[i];
+    // Case-insensitive compare
+    std::transform(arg.begin(), arg.end(), arg.begin(), ::tolower);
+    std::string flagLower = flag;
+    std::transform(flagLower.begin(), flagLower.end(), flagLower.begin(),
+                   ::tolower);
+    if (arg == flagLower)
+      return std::string(argv[i + 1]);
+  }
+  return "";
+}
+
+bool cliHasFlag(int argc, char *argv[], const std::string &flag) {
+  for (int i = 0; i < argc; i++) {
+    std::string arg = argv[i];
+    std::transform(arg.begin(), arg.end(), arg.begin(), ::tolower);
+    std::string flagLower = flag;
+    std::transform(flagLower.begin(), flagLower.end(), flagLower.begin(),
+                   ::tolower);
+    if (arg == flagLower)
+      return true;
+  }
+  return false;
+}
+
+void printHelp() {
+  exibirDesenho();
+  std::cout << R"(
+  USAGE:
+    BruteForce                                     Modo interativo (menu)
+    BruteForce <comando> [args] [opcoes]           Modo CLI
+
+  COMMANDS:
+    crack, c          <hash>                       Auto-detectar e quebrar hash
+    crack-salt, cs    <hash> --alvo <1-11>         Hash + Salt (modo avancado)
+    decode, d         <base64>                     Decodificar Base64
+    test-all, t                                    Executar todos os testes
+    hash, g           <texto>                      Gerar hashes (calculadora)
+    help, h, ?                                     Mostrar esta ajuda
+    version, v                                     Mostrar versao
+
+  OPTIONS:
+    --engine, -e <cpu|cuda|opencl>                 Selecionar compute unit
+    --charset, -c <1-7>                            Charset para forca bruta
+        1=Numerico 2=a-z 3=A-Z 4=a-zA-Z 5=a-z0-9 6=Alfanum 7=ASCII Total
+    --salt, -s <valor>                             Salt para modo avancado
+    --alvo, -a <1-11>                              Algoritmo salted
+        1=MD5+Salt 2=SHA1+Salt 3=WPA2 4=SHA256+Salt 5=SHA512+Salt
+        6=WPA3 7=Bcrypt 8=Scrypt 9=Facebook 10=Instagram 11=Twitter
+    --no-dict, -n                                  Pular ataque de dicionario
+    --max-len, -l <N>                              Comprimento maximo (default: 16)
+
+  EXAMPLES:
+    BruteForce crack "5d41402abc4b2a76b9719d911017c592"
+    BruteForce crack "5d41402abc4b2a76b9719d911017c592" --charset 5 --no-dict
+    BruteForce crack-salt "abc123hash" --alvo 3 --salt "MySSID" --engine opencl
+    BruteForce hash "senha123"
+    BruteForce decode "dGVzdGUxMjM="
+    BruteForce test-all --engine opencl
+)" << std::endl;
+}
+
+void printVersion() {
+  std::cout << "Brute Force Methods v2.2-DYNAMIC\n";
+  std::cout << "Developed by Zeca | Sentinel Data Solutions\n";
+  std::cout << "Forensic Audit Tool | For Didactic Use Only\n";
+}
+
+void initEngine(const std::string &engineStr) {
+  if (engineStr == "cuda") {
+    globalCompute = ComputeType::CUDA;
+#if defined(ENABLE_CUDA)
+    initCUDA();
+#else
+    std::cout << "[!] CUDA Native Disabled. Switching to OpenCL Bridge...\n";
+    globalCompute = ComputeType::OPENCL;
+    initOpenCL();
+#endif
+  } else if (engineStr == "opencl") {
+    globalCompute = ComputeType::OPENCL;
+    initOpenCL();
+  } else {
+    globalCompute = ComputeType::CPU;
+    std::cout << "[CPU] Inicializando Threads do Processador...\n";
+  }
+}
+
 // --- Main Interface ---
 
-int main() {
+int main(int argc, char *argv[]) {
   enableANSI();
+
+  // === CLI MODE (when arguments are passed) ===
+  if (argc > 1) {
+    std::string command = argv[1];
+    std::transform(command.begin(), command.end(), command.begin(), ::tolower);
+    // Strip leading dashes
+    while (!command.empty() && command[0] == '-')
+      command.erase(0, 1);
+
+    // Parse global engine flag
+    std::string engineOpt = cliGetArgValue(argc, argv, "--engine");
+    if (engineOpt.empty())
+      engineOpt = cliGetArgValue(argc, argv, "-e");
+    if (!engineOpt.empty()) {
+      std::transform(engineOpt.begin(), engineOpt.end(), engineOpt.begin(),
+                     ::tolower);
+      initEngine(engineOpt);
+    } else {
+      globalCompute = ComputeType::CPU;
+    }
+
+    // --- HELP ---
+    if (command == "help" || command == "h" || command == "?") {
+      printHelp();
+      return 0;
+    }
+
+    // --- VERSION ---
+    if (command == "version" || command == "v") {
+      printVersion();
+      return 0;
+    }
+
+    // --- TEST-ALL ---
+    if (command == "test-all" || command == "t") {
+      runAllTests();
+      return 0;
+    }
+
+    // --- DECODE BASE64 ---
+    if (command == "decode" || command == "d") {
+      if (argc < 3) {
+        std::cout << "\x1b[1;31m[!] Uso: BruteForce decode <base64>\x1b[0m\n";
+        return 1;
+      }
+      std::string b64 = argv[2];
+      exibirDesenho();
+      std::cout << "\n\x1b[1;36m[BASE64 DECODE]\x1b[0m\n";
+      std::cout << "\x1b[1;30m" << std::string(50, '-') << "\x1b[0m\n";
+      std::cout << "Input:     \"" << b64 << "\"\n";
+      std::cout << "Resultado: \x1b[1;32m" << base64_decode(b64)
+                << "\x1b[0m\n";
+      std::cout << "\x1b[1;30m" << std::string(50, '-') << "\x1b[0m\n";
+      return 0;
+    }
+
+    // --- HASH CALCULATOR ---
+    if (command == "hash" || command == "g") {
+      if (argc < 3) {
+        std::cout
+            << "\x1b[1;31m[!] Uso: BruteForce hash <texto>\x1b[0m\n";
+        return 1;
+      }
+      std::string inputCalc = argv[2];
+      exibirDesenho();
+      std::cout << "\n\x1b[1;36m[HASH CALCULATOR]\x1b[0m\n";
+      std::cout << "\x1b[1;30m" << std::string(50, '-') << "\x1b[0m\n";
+      std::cout << "Texto:  \"" << inputCalc << "\"\n";
+
+      if (globalCompute == ComputeType::OPENCL) {
+        char gpu_hex[129] = {0};
+        std::cout << "Base64: "
+                  << base64_encode((unsigned char *)inputCalc.c_str(),
+                                   (unsigned int)inputCalc.length())
+                  << "\n";
+        launch_opencl_hash_calc(inputCalc.c_str(), gpu_hex, 0);
+        std::cout << "MD5:    " << gpu_hex << "\n";
+        launch_opencl_hash_calc(inputCalc.c_str(), gpu_hex, 1);
+        std::cout << "SHA1:   " << gpu_hex << "\n";
+        launch_opencl_hash_calc(inputCalc.c_str(), gpu_hex, 2);
+        std::cout << "SHA256: " << gpu_hex << "\n";
+        launch_opencl_hash_calc(inputCalc.c_str(), gpu_hex, 3);
+        std::cout << "SHA512: " << gpu_hex << "\n";
+      } else {
+        std::cout << "Base64: "
+                  << base64_encode((unsigned char *)inputCalc.c_str(),
+                                   (unsigned int)inputCalc.length())
+                  << "\n";
+        std::cout << "MD5:    " << md5(inputCalc) << "\n";
+        std::cout << "SHA1:   " << sha1(inputCalc) << "\n";
+        std::cout << "SHA256: " << picosha2::hash256_hex_string(inputCalc)
+                  << "\n";
+        std::cout << "SHA512: " << sha512(inputCalc) << "\n";
+      }
+      std::cout << "\x1b[1;30m" << std::string(50, '-') << "\x1b[0m\n";
+      return 0;
+    }
+
+    // --- CRACK (Auto-Detect) ---
+    if (command == "crack" || command == "c") {
+      if (argc < 3) {
+        std::cout
+            << "\x1b[1;31m[!] Uso: BruteForce crack <hash> [opcoes]\x1b[0m\n";
+        return 1;
+      }
+      exibirDesenho();
+      Config config;
+      config.target = argv[2];
+      config.targetHash = config.target;
+      config.type = identifyHash(config.target);
+      config.hashType = getKernelAlgoId(config.type);
+
+      // Parse optional max-len
+      std::string maxLenStr = cliGetArgValue(argc, argv, "--max-len");
+      if (maxLenStr.empty())
+        maxLenStr = cliGetArgValue(argc, argv, "-l");
+      config.maxLength = maxLenStr.empty() ? 16 : std::stoi(maxLenStr);
+
+      std::cout << "\n\x1b[1;36m[CRACK MODE]\x1b[0m Auto-Detect\n";
+      std::cout << "\x1b[1;30m" << std::string(50, '-') << "\x1b[0m\n";
+      std::cout << "[i] Tipo detectado: " << hashTypeName(config.type)
+                << "\n";
+      std::cout << "[i] Hash alvo: " << config.target << "\n";
+      std::cout << "[i] Engine: " << getEngineName() << "\n";
+
+      if (config.type == HashType::UNKNOWN) {
+        std::cout << "\x1b[1;31m[!] ERRO: Formato de Hash Invalido!\x1b[0m\n";
+        return 1;
+      }
+
+      if (config.type == HashType::BASE64) {
+        std::cout << "Detectado Base64. Decodificando...\n";
+        std::cout << "Resultado: " << base64_decode(config.target) << "\n";
+        return 0;
+      }
+
+      // Charset
+      std::string charsetStr = cliGetArgValue(argc, argv, "--charset");
+      if (charsetStr.empty())
+        charsetStr = cliGetArgValue(argc, argv, "-c");
+      int charsetId = charsetStr.empty() ? 6 : std::stoi(charsetStr);
+      config.charset = getCharset(charsetId);
+      std::cout << "[i] Charset: " << charsetId << " (" << config.charset.length() << " chars)\n";
+
+      // Dictionary attack first (unless --no-dict)
+      bool noDict = cliHasFlag(argc, argv, "--no-dict") ||
+                    cliHasFlag(argc, argv, "-n");
+      bool dictFound = false;
+      if (!noDict && fileExists("wordlist.txt")) {
+        std::cout << "[+] Tentando ataque de dicionario...\n";
+        dictFound = dictionaryAttack(config);
+      }
+
+      if (!dictFound) {
+        std::cout << "[+] Iniciando forca bruta...\n";
+        runParallelBruteForce(config);
+      }
+      return 0;
+    }
+
+    // --- CRACK-SALT (Advanced / Salted) ---
+    if (command == "crack-salt" || command == "cs") {
+      if (argc < 3) {
+        std::cout << "\x1b[1;31m[!] Uso: BruteForce crack-salt <hash> --alvo "
+                     "<1-11> --salt <salt>\x1b[0m\n";
+        return 1;
+      }
+      exibirDesenho();
+      Config config;
+      config.target = argv[2];
+      config.targetHash = config.target;
+
+      // Parse --alvo
+      std::string alvoStr = cliGetArgValue(argc, argv, "--alvo");
+      if (alvoStr.empty())
+        alvoStr = cliGetArgValue(argc, argv, "-a");
+      int alvo = alvoStr.empty() ? 1 : std::stoi(alvoStr);
+
+      switch (alvo) {
+      case 1: config.type = HashType::SALTED_MD5; break;
+      case 2: config.type = HashType::SALTED_SHA1; break;
+      case 3: config.type = HashType::WPA2_PBKDF2; break;
+      case 4: config.type = HashType::SALTED_SHA256; break;
+      case 5: config.type = HashType::SALTED_SHA512; break;
+      case 6: config.type = HashType::WPA3_SAE; break;
+      case 7: config.type = HashType::BCRYPT; break;
+      case 8: config.type = HashType::SCRYPT; break;
+      case 9: config.type = HashType::SOCIAL_FB; break;
+      case 10: config.type = HashType::SOCIAL_IG; break;
+      case 11: config.type = HashType::SOCIAL_TW; break;
+      default: config.type = HashType::SALTED_MD5; break;
+      }
+      config.hashType = getKernelAlgoId(config.type);
+
+      // Parse salt
+      std::string saltVal = cliGetArgValue(argc, argv, "--salt");
+      if (saltVal.empty())
+        saltVal = cliGetArgValue(argc, argv, "-s");
+      config.salt = saltVal;
+
+      // Parse optional max-len
+      std::string maxLenStr = cliGetArgValue(argc, argv, "--max-len");
+      if (maxLenStr.empty())
+        maxLenStr = cliGetArgValue(argc, argv, "-l");
+      config.maxLength = maxLenStr.empty() ? 16 : std::stoi(maxLenStr);
+
+      // Charset
+      std::string charsetStr = cliGetArgValue(argc, argv, "--charset");
+      if (charsetStr.empty())
+        charsetStr = cliGetArgValue(argc, argv, "-c");
+      int charsetId = charsetStr.empty() ? 6 : std::stoi(charsetStr);
+      config.charset = getCharset(charsetId);
+
+      std::cout << "\n\x1b[1;36m[CRACK-SALT MODE]\x1b[0m Avancado\n";
+      std::cout << "\x1b[1;30m" << std::string(50, '-') << "\x1b[0m\n";
+      std::cout << "[i] Algoritmo: " << hashTypeName(config.type) << "\n";
+      std::cout << "[i] Hash alvo: " << config.target << "\n";
+      std::cout << "[i] Salt: " << (config.salt.empty() ? "(saltlist.txt)" : config.salt) << "\n";
+      std::cout << "[i] Engine: " << getEngineName() << "\n";
+      std::cout << "[i] Charset: " << charsetId << " (" << config.charset.length() << " chars)\n";
+      std::cout << "\x1b[1;30m" << std::string(50, '-') << "\x1b[0m\n";
+
+      // Dictionary attack first (unless --no-dict)
+      bool noDict = cliHasFlag(argc, argv, "--no-dict") ||
+                    cliHasFlag(argc, argv, "-n");
+      bool dictFound = false;
+      if (!noDict && fileExists("wordlist.txt")) {
+        std::cout << "[+] Tentando ataque de dicionario...\n";
+        dictFound = dictionaryAttack(config);
+      }
+
+      if (!dictFound) {
+        std::cout << "[+] Iniciando forca bruta...\n";
+        runParallelBruteForce(config);
+      }
+      return 0;
+    }
+
+    // --- UNKNOWN COMMAND ---
+    std::cout << "\x1b[1;31m[!] Comando desconhecido: " << argv[1]
+              << "\x1b[0m\n";
+    std::cout << "\x1b[1;30mUse 'BruteForce --help' para ver os comandos "
+                 "disponiveis.\x1b[0m\n";
+    return 1;
+  }
+
+  // === INTERACTIVE MODE (no arguments — original menu) ===
 
   // --- HARDWARE SELECTION MENU ---
   std::cout << "\n\x1b[1;33m[?] SELECIONE A UNIDADE DE PROCESSAMENTO "

@@ -13,6 +13,7 @@
 # Visual Studio
 .vs/
 x64/
+Brute*/
 x86/
 [Dd]ebug/
 [Rr]elease/
