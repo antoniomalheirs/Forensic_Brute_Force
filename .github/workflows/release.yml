@@ -22,7 +22,7 @@ jobs:
       id: cuda-toolkit
       uses: Jimver/cuda-toolkit@v0.2.14
       with:
-        cuda: '13.1.0'
+        cuda: '12.2.0'
         method: 'network' # Trying network method to avoid cache issues
 
     - name: Build
