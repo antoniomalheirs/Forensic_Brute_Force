@@ -23,7 +23,9 @@ jobs:
       uses: Jimver/cuda-toolkit@v0.2.14
       with:
         cuda: '12.2.0'
-        method: 'network' # Trying network method to avoid cache issues
+        method: 'network'
+        use-github-cache: false
+        use-local-cache: false
 
     - name: Build
       shell: cmd
