@@ -19,7 +19,7 @@ jobs:
       id: cuda-toolkit
       uses: Jimver/cuda-toolkit@v0.2.14
       with:
-        cuda: '12.4.1' # Using a recent stable version
+        cuda: '12.2.0' # Using a known stable version supported by the action
 
     - name: Build
       shell: cmd
