@@ -45,19 +45,29 @@ jobs:
         link.exe /OUT:"Brute Force Methods.exe" "Brute Force Methods.obj" "opencl_kernels.obj" "gpu_kernels.obj" cudart.lib OpenCL.lib /LIBPATH:"%CUDA_PATH%\lib\x64"
         if %errorlevel% neq 0 exit /b %errorlevel%
 
+        echo [COPY] Copying CUDA Runtime DLLs...
+        copy "%CUDA_PATH%\bin\cudart64_*.dll" .
+
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
         name: Brute_Force_Methods
-        path: "Brute Force Methods.exe"
+        path: |
+          Brute Force Methods.exe
+          *.dll
 
+        
     - name: Create Release
       if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+      id: create_release
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: continuous
-        name: Continuous Release
-        files: "Brute Force Methods.exe"
+        tag_name: v1.0.${{ github.run_number }}
+        name: Release v1.0.${{ github.run_number }}
         draft: false
-        prerelease: true
-        overwrite: true
+        prerelease: false
+        files: |
+          Brute Force Methods.exe
+          *.dll
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
