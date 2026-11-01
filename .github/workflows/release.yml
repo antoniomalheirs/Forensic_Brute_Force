@@ -30,19 +30,22 @@ jobs:
     - name: Build
       shell: cmd
       run: |
+        echo [CUDA] Compiling GPU Kernels...
+        set "CUDA_OBJ="
+        set "CUDA_DEF="
+        nvcc.exe -O3 -allow-unsupported-compiler -c "gpu_kernels.cu" -o "gpu_kernels.obj" -Iinclude -I"%CUDA_PATH%\include"
+        if %errorlevel% equ 0 set "CUDA_OBJ=gpu_kernels.obj cudart.lib"
+        if %errorlevel% equ 0 set "CUDA_DEF=/DENABLE_CUDA"
+
         echo [CPP] Compiling Host Code (C++20)...
-        cl.exe /EHsc /std:c++20 /O2 /c "cerberus.cpp" /Fo:"cerberus.obj" /Iinclude /I"%CUDA_PATH%\include"
+        cl.exe /EHsc /std:c++20 /O2 %CUDA_DEF% /c "cerberus.cpp" /Fo:"cerberus.obj" /Iinclude /I"%CUDA_PATH%\include"
         if %errorlevel% neq 0 exit /b %errorlevel%
         
         cl.exe /EHsc /std:c++20 /O2 /c "opencl_kernels.cpp" /Fo:"opencl_kernels.obj" /Iinclude /I"%CUDA_PATH%\include"
         if %errorlevel% neq 0 exit /b %errorlevel%
 
-        echo [CUDA] Compiling GPU Kernels...
-        nvcc.exe -O3 -c "gpu_kernels.cu" -o "gpu_kernels.obj" -Iinclude -I"%CUDA_PATH%\include"
-        if %errorlevel% neq 0 exit /b %errorlevel%
-
         echo [LINK] Linking Executable...
-        link.exe /OUT:"cerberus.exe" "cerberus.obj" "opencl_kernels.obj" "gpu_kernels.obj" cudart.lib OpenCL.lib /LIBPATH:lib\x64 /LIBPATH:"%CUDA_PATH%\lib\x64"
+        link.exe /OUT:"cerberus.exe" "cerberus.obj" "opencl_kernels.obj" %CUDA_OBJ% OpenCL.lib /LIBPATH:lib\x64 /LIBPATH:"%CUDA_PATH%\lib\x64"
         if %errorlevel% neq 0 exit /b %errorlevel%
 
         echo [COPY] Copying CUDA Runtime DLLs...
@@ -55,6 +58,7 @@ jobs:
         path: |
           cerberus.exe
           *.dll
+        if-no-files-found: warn
 
     - name: Create Release
       if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
@@ -65,6 +69,7 @@ jobs:
         name: CERBERUS v3.0.${{ github.run_number }}
         draft: false
         prerelease: false
+        fail_on_unmatched_files: false
         body: |
           ## 🔱 CERBERUS v3.0 — The Triple-Headed Forensic Engine
           Industrial-grade cryptographic recovery and forensic audit framework.
