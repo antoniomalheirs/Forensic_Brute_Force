@@ -1,15 +1,17 @@
 #define CL_TARGET_OPENCL_VERSION 300
 #define CL_USE_DEPRECATED_OPENCL_1_2_APIS // For wider compatibility
 #include <CL/cl.h>
+#include <cctype>
 #include <chrono>
+#include <iomanip>
 #include <iostream>
 #include <string>
 #include <thread>
 #include <vector>
 
-// --- Embedded OpenCL C Kernel Source ---
-const char *kernelSource = R"(
-// Rotate Left (for MD5/SHA1)
+// --- Embedded OpenCL C Kernel Source (Split into 3 chunks for MSVC compliance) ---
+const char *kernelSource1 = R"(
+// Rotate Left (for MD4/MD5/SHA1)
 #define R(x, n) (((x) << (n)) | ((x) >> (32 - (n))))
 // Rotate Right (for SHA256)
 #define ROTR(x, n) (((x) >> (n)) | ((x) << (32 - (n))))
@@ -71,9 +73,6 @@ __constant unsigned long K512[80] = {
 #define sigma0_512(x) (ROTR64(x, 1) ^ ROTR64(x, 8) ^ ((x) >> 7))
 #define sigma1_512(x) (ROTR64(x, 19) ^ ROTR64(x, 61) ^ ((x) >> 6))
 
-// ============================================================
-// SHA-256 Multi-Block Implementation (supports up to 119 bytes)
-// ============================================================
 void sha256_process_block(unsigned int *state, const unsigned char *block) {
     unsigned int w[64];
     for(int i=0; i<16; i++) {
@@ -107,9 +106,6 @@ void sha256_core(const unsigned char *data, int len, unsigned int *hash) {
     for(int off=0; off<paddedLen; off+=64) sha256_process_block(hash, buffer+off);
 }
 
-// ============================================================
-// SHA-512 Multi-Block Implementation (supports up to 239 bytes)
-// ============================================================
 void sha512_process_block(unsigned long *state, const unsigned char *block) {
     unsigned long w[16];
     for (int i = 0; i < 16; i++) {
@@ -149,6 +145,64 @@ void sha512_core(const unsigned char *data, int len, unsigned long *hash) {
     unsigned long bits = (unsigned long)len * 8;
     for(int i=0; i<8; i++) buffer[paddedLen-1-i] = (bits >> (i*8)) & 0xFF;
     for(int off=0; off<paddedLen; off+=128) sha512_process_block(hash, buffer+off);
+}
+)";
+
+const char *kernelSource2 = R"(
+// ============================================================
+// MD4 Implementation (RFC 1320 - for NTLM & MD4)
+// ============================================================
+void md4_process_block(unsigned int *state, const unsigned char *block) {
+    unsigned int w[16];
+    for(int i=0; i<16; i++) {
+        w[i] = ((unsigned int)block[i*4]) | (((unsigned int)block[i*4+1]) << 8) |
+               (((unsigned int)block[i*4+2]) << 16) | (((unsigned int)block[i*4+3]) << 24);
+    }
+    unsigned int a = state[0], b = state[1], c = state[2], d = state[3];
+
+    #define F_4(x, y, z) (((x) & (y)) | ((~x) & (z)))
+    #define G_4(x, y, z) (((x) & (y)) | ((x) & (z)) | ((y) & (z)))
+    #define H_4(x, y, z) ((x) ^ (y) ^ (z))
+    #define R1_4(a,b,c,d,k,s) a = R((a + F_4(b,c,d) + w[k]), s)
+    #define R2_4(a,b,c,d,k,s) a = R((a + G_4(b,c,d) + w[k] + 0x5A827999), s)
+    #define R3_4(a,b,c,d,k,s) a = R((a + H_4(b,c,d) + w[k] + 0x6ED9EBA1), s)
+
+    R1_4(a,b,c,d, 0, 3); R1_4(d,a,b,c, 1, 7); R1_4(c,d,a,b, 2, 11); R1_4(b,c,d,a, 3, 19);
+    R1_4(a,b,c,d, 4, 3); R1_4(d,a,b,c, 5, 7); R1_4(c,d,a,b, 6, 11); R1_4(b,c,d,a, 7, 19);
+    R1_4(a,b,c,d, 8, 3); R1_4(d,a,b,c, 9, 7); R1_4(c,d,a,b,10, 11); R1_4(b,c,d,a,11, 19);
+    R1_4(a,b,c,d,12, 3); R1_4(d,a,b,c,13, 7); R1_4(c,d,a,b,14, 11); R1_4(b,c,d,a,15, 19);
+
+    R2_4(a,b,c,d, 0, 3); R2_4(d,a,b,c, 4, 5); R2_4(c,d,a,b, 8, 9); R2_4(b,c,d,a,12, 13);
+    R2_4(a,b,c,d, 1, 3); R2_4(d,a,b,c, 5, 5); R2_4(c,d,a,b, 9, 9); R2_4(b,c,d,a,13, 13);
+    R2_4(a,b,c,d, 2, 3); R2_4(d,a,b,c, 6, 5); R2_4(c,d,a,b,10, 9); R2_4(b,c,d,a,14, 13);
+    R2_4(a,b,c,d, 3, 3); R2_4(d,a,b,c, 7, 5); R2_4(c,d,a,b,11, 9); R2_4(b,c,d,a,15, 13);
+
+    R3_4(a,b,c,d, 0, 3); R3_4(d,a,b,c, 8, 9); R3_4(c,d,a,b, 4, 11); R3_4(b,c,d,a,12, 15);
+    R3_4(a,b,c,d, 2, 3); R3_4(d,a,b,c,10, 9); R3_4(c,d,a,b, 6, 11); R3_4(b,c,d,a,14, 15);
+    R3_4(a,b,c,d, 1, 3); R3_4(d,a,b,c, 9, 9); R3_4(c,d,a,b, 5, 11); R3_4(b,c,d,a,13, 15);
+    R3_4(a,b,c,d, 3, 3); R3_4(d,a,b,c,11, 9); R3_4(c,d,a,b, 7, 11); R3_4(b,c,d,a,15, 15);
+
+    #undef F_4
+    #undef G_4
+    #undef H_4
+    #undef R1_4
+    #undef R2_4
+    #undef R3_4
+
+    state[0] += a; state[1] += b; state[2] += c; state[3] += d;
+}
+
+void md4_core(const unsigned char *data, int len, unsigned int *digest) {
+    digest[0] = 0x67452301; digest[1] = 0xefcdab89;
+    digest[2] = 0x98badcfe; digest[3] = 0x10325476;
+    unsigned char buffer[128];
+    for(int i=0; i<128; i++) buffer[i] = 0;
+    for(int i=0; i<len && i<120; i++) buffer[i] = data[i];
+    buffer[len] = 0x80;
+    int paddedLen = (len < 56) ? 64 : 128;
+    unsigned long bits = (unsigned long)len * 8;
+    for(int i=0; i<8; i++) buffer[paddedLen-8+i] = (bits >> (i*8)) & 0xFF;
+    for(int off=0; off<paddedLen; off+=64) md4_process_block(digest, buffer+off);
 }
 
 // ============================================================
@@ -246,9 +300,6 @@ void sha1_core(const unsigned char *data, int len, unsigned int *hash) {
     for(int off=0; off<paddedLen; off+=64) sha1_process_block(hash, buffer+off);
 }
 
-// ============================================================
-// Hex Conversion Utility
-// ============================================================
 void hex_to_string(unsigned int val, char *out, bool reverseBytes) {
     const char hex[] = "0123456789abcdef";
     for(int i=0; i<4; i++) {
@@ -258,7 +309,9 @@ void hex_to_string(unsigned int val, char *out, bool reverseBytes) {
         out[2*i+1] = hex[byte & 0xF];
     }
 }
+)";
 
+const char *kernelSource3 = R"(
 // ============================================================
 // Universal Brute Force Kernel
 // ============================================================
@@ -267,6 +320,7 @@ __kernel void brute_force_universal(
     int charsetLen,
     int length,
     ulong offset,
+    ulong totalCombinations,
     __global const char *targetHash,
     int hashType,
     __global const char *salt,
@@ -276,7 +330,7 @@ __kernel void brute_force_universal(
     __global ulong *found_index
 ) {
     ulong gid = get_global_id(0) + offset;
-    if (*found) return;
+    if (*found || gid >= totalCombinations) return;
 
     char candidate[256]; ulong temp = gid;
     for(int i=0; i<length; i++) {
@@ -322,8 +376,20 @@ __kernel void brute_force_universal(
         sha1_core((const unsigned char*)candidate, wpaLen, res);
         for(int i=0; i<5; i++) hex_to_string(res[i], hex+(i*8), false);
         hexLen = 40;
-)";
-const char *kernelSource2 = R"(
+    } else if(hashType == 11) { // NTLM: MD4(UTF-16LE(candidate))
+        unsigned char utf16[128];
+        for(int i=0; i<length && i<60; i++) {
+            utf16[i*2] = candidate[i];
+            utf16[i*2+1] = 0;
+        }
+        int uLen = length * 2;
+        md4_core(utf16, uLen, res);
+        for(int i=0; i<4; i++) hex_to_string(res[i], hex+(i*8), true);
+        hexLen = 32;
+    } else if(hashType == 12) { // MD4
+        md4_core((const unsigned char*)candidate, combinedLen, res);
+        for(int i=0; i<4; i++) hex_to_string(res[i], hex+(i*8), true);
+        hexLen = 32;
     } else if(hashType == 5) { // WPA3-Sim: sha256(pass + salt + "SAE_Dragonfly_Commit")
         const char suffix[] = "SAE_Dragonfly_Commit";
         for(int i=0; i<20; i++) candidate[combinedLen+i] = suffix[i];
@@ -411,16 +477,21 @@ const char *kernelSource2 = R"(
     bool match = true;
     if (hexLen == 0) match = false; 
     else {
-        for(int i=0; i<hexLen; i++) {
-            if(hex[i] != targetHash[i]) { match=false; break; }
+        if (targetHash[hexLen] != '\0' && targetHash[hexLen] != ' ') {
+            match = false;
+        } else {
+            for(int i=0; i<hexLen; i++) {
+                if(hex[i] != targetHash[i]) { match=false; break; }
+            }
         }
     }
 
     if(match) {
-        *found = 1;
-        *found_index = gid;
-        for(int i=0; i<length; i++) result[i] = candidate[i]; 
-        result[length] = '\0';
+        if (atomic_cmpxchg(found, 0, 1) == 0) {
+            *found_index = gid;
+            for(int i=0; i<length; i++) result[i] = candidate[i]; 
+            result[length] = '\0';
+        }
     }
 }
 
@@ -448,6 +519,19 @@ __kernel void hash_calculator_universal(
             hex_to_string((unsigned int)(val & 0xFFFFFFFF), output_hex+(i*16)+8, false);
         }
         output_hex[128] = '\0';
+    } else if(hashType == 11) { // NTLM
+        unsigned char utf16[256];
+        for(int i=0; i<len && i<120; i++) {
+            utf16[i*2] = input[i];
+            utf16[i*2+1] = 0;
+        }
+        md4_core(utf16, len * 2, res);
+        for(int i=0; i<4; i++) hex_to_string(res[i], output_hex+(i*8), true);
+        output_hex[32] = '\0';
+    } else if(hashType == 12) { // MD4
+        md4_core((const unsigned char*)input, len, res);
+        for(int i=0; i<4; i++) hex_to_string(res[i], output_hex+(i*8), true);
+        output_hex[32] = '\0';
     } else {
         sha256_core((const unsigned char*)input, len, res);
         for(int i=0; i<8; i++) hex_to_string(res[i], output_hex+(i*8), false);
@@ -471,51 +555,52 @@ void checkErr(cl_int err, const char *name) {
 }
 
 // --- Public Interface ---
+static int g_opencl_quiet = 0;
+extern "C" void set_opencl_quiet(int q) { g_opencl_quiet = q; }
 
-extern "C" void initOpenCL() {
+extern "C" int initOpenCL() {
   cl_int err;
-  cl_uint num_platforms;
-
-  std::cout << "\n\x1b[1;36m[OpenCL] Initializing Runtime...\x1b[0m\n";
+  cl_uint num_platforms = 0;
 
   err = clGetPlatformIDs(1, &platform_id, &num_platforms);
-  checkErr(err, "clGetPlatformIDs");
+  if (err != CL_SUCCESS || num_platforms == 0) return 0;
 
   err = clGetDeviceIDs(platform_id, CL_DEVICE_TYPE_GPU, 1, &device_id, NULL);
-  checkErr(err, "clGetDeviceIDs");
+  if (err != CL_SUCCESS) {
+    err = clGetDeviceIDs(platform_id, CL_DEVICE_TYPE_ALL, 1, &device_id, NULL);
+  }
+  if (err != CL_SUCCESS) return 0;
 
-  char deviceName[128];
+  char deviceName[128] = {0};
   clGetDeviceInfo(device_id, CL_DEVICE_NAME, 128, deviceName, NULL);
-  std::cout << "  [+] Device: " << deviceName << " (Universal Support)\n";
 
   context = clCreateContext(NULL, 1, &device_id, NULL, NULL, &err);
-  checkErr(err, "clCreateContext");
+  if (err != CL_SUCCESS) return 0;
 
   command_queue = clCreateCommandQueue(context, device_id, 0, &err);
-  checkErr(err, "clCreateCommandQueue");
+  if (err != CL_SUCCESS) return 0;
 
-  const char *sources[] = {kernelSource, kernelSource2};
-  program = clCreateProgramWithSource(context, 2, sources, NULL, &err);
-  checkErr(err, "clCreateProgramWithSource");
+  const char *sources[] = {kernelSource1, kernelSource2, kernelSource3};
+  program = clCreateProgramWithSource(context, 3, sources, NULL, &err);
+  if (err != CL_SUCCESS) return 0;
 
-  std::cout << "[OpenCL] Building Kernel (JIT Compilation)...\n";
   err = clBuildProgram(program, 1, &device_id, NULL, NULL, NULL);
   if (err != CL_SUCCESS) {
-    size_t len;
-    clGetProgramBuildInfo(program, device_id, CL_PROGRAM_BUILD_LOG, 0, NULL,
-                          &len);
-    char *log = new char[len];
-    clGetProgramBuildInfo(program, device_id, CL_PROGRAM_BUILD_LOG, len, log,
-                          NULL);
-    std::cerr << "[OpenCL] Build Log:\n" << log << std::endl;
-    delete[] log;
+    size_t log_size = 0;
+    clGetProgramBuildInfo(program, device_id, CL_PROGRAM_BUILD_LOG, 0, NULL, &log_size);
+    std::vector<char> build_log(log_size + 1);
+    clGetProgramBuildInfo(program, device_id, CL_PROGRAM_BUILD_LOG, log_size, build_log.data(), NULL);
+    std::cerr << "[OpenCL Build Error]\n" << build_log.data() << std::endl;
+    return 0;
   }
-  checkErr(err, "clBuildProgram");
 
   kernel = clCreateKernel(program, "brute_force_universal", &err);
-  checkErr(err, "clCreateKernel");
+  if (err != CL_SUCCESS) return 0;
 
-  std::cout << "\x1b[1;32m[OpenCL] ENGINE READY.\x1b[0m\n";
+  if (!g_opencl_quiet) {
+    std::cout << "\x1b[1;32m[OpenCL] GPU Detectada & Pronta: " << deviceName << "\x1b[0m\n";
+  }
+  return 1;
 }
 
 extern "C" void launch_opencl_brute_force(const char *charset,
@@ -529,12 +614,32 @@ extern "C" void launch_opencl_brute_force(const char *charset,
   if (attempts_out)
     *attempts_out = 0;
 
+  // Normalize target: preserve case for Bcrypt (Base64), uppercase prefixes (e.g. SCRYPT:),
+  // and lowercase hexadecimal portions for 100% match accuracy.
+  char lowerTarget[256] = {0};
+  if (target) {
+    size_t tLen = strlen(target);
+    if (tLen >= sizeof(lowerTarget)) tLen = sizeof(lowerTarget) - 1;
+    const char *colon = strchr(target, ':');
+    size_t prefixLen = colon ? (size_t)(colon - target + 1) : 0;
+
+    for (size_t i = 0; i < tLen; i++) {
+      if (hashType == 6) {
+        lowerTarget[i] = target[i];
+      } else if (i < prefixLen) {
+        lowerTarget[i] = static_cast<char>(toupper(static_cast<unsigned char>(target[i])));
+      } else {
+        lowerTarget[i] = static_cast<char>(tolower(static_cast<unsigned char>(target[i])));
+      }
+    }
+  }
+
   cl_mem d_charset =
       clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
                      charsetLen + 1, (void *)charset, &err);
   cl_mem d_target =
       clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, 256,
-                     (void *)target, &err);
+                     (void *)lowerTarget, &err);
   cl_mem d_salt =
       clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
                      saltLen + 1, (void *)(salt ? salt : ""), &err);
@@ -550,6 +655,10 @@ extern "C" void launch_opencl_brute_force(const char *charset,
 
   size_t global_item_size = 1048576; // 1M threads per batch
   size_t local_item_size = 64;
+
+  auto gpu_start = std::chrono::high_resolution_clock::now();
+  auto last_print = gpu_start;
+  bool printed_progress = false;
 
   for (int len = 1; len <= max_len; len++) {
     unsigned long long totalCombinations = 1;
@@ -567,18 +676,20 @@ extern "C" void launch_opencl_brute_force(const char *charset,
         break;
 
       cl_ulong cl_offset = (cl_ulong)offset;
+      cl_ulong cl_total = (cl_ulong)totalCombinations;
 
       err = clSetKernelArg(kernel, 0, sizeof(cl_mem), &d_charset);
       err |= clSetKernelArg(kernel, 1, sizeof(int), &charsetLen);
       err |= clSetKernelArg(kernel, 2, sizeof(int), &len);
       err |= clSetKernelArg(kernel, 3, sizeof(cl_ulong), &cl_offset);
-      err |= clSetKernelArg(kernel, 4, sizeof(cl_mem), &d_target);
-      err |= clSetKernelArg(kernel, 5, sizeof(int), &hashType);
-      err |= clSetKernelArg(kernel, 6, sizeof(cl_mem), &d_salt);
-      err |= clSetKernelArg(kernel, 7, sizeof(int), &saltLen);
-      err |= clSetKernelArg(kernel, 8, sizeof(cl_mem), &d_found);
-      err |= clSetKernelArg(kernel, 9, sizeof(cl_mem), &d_result);
-      err |= clSetKernelArg(kernel, 10, sizeof(cl_mem), &d_index);
+      err |= clSetKernelArg(kernel, 4, sizeof(cl_ulong), &cl_total);
+      err |= clSetKernelArg(kernel, 5, sizeof(cl_mem), &d_target);
+      err |= clSetKernelArg(kernel, 6, sizeof(int), &hashType);
+      err |= clSetKernelArg(kernel, 7, sizeof(cl_mem), &d_salt);
+      err |= clSetKernelArg(kernel, 8, sizeof(int), &saltLen);
+      err |= clSetKernelArg(kernel, 9, sizeof(cl_mem), &d_found);
+      err |= clSetKernelArg(kernel, 10, sizeof(cl_mem), &d_result);
+      err |= clSetKernelArg(kernel, 11, sizeof(cl_mem), &d_index);
 
       size_t current_batch_size =
           (totalCombinations - offset < global_item_size)
@@ -594,7 +705,83 @@ extern "C" void launch_opencl_brute_force(const char *charset,
                                    NULL, NULL);
       if (attempts_out)
         *attempts_out += current_batch_size;
-      clFinish(command_queue);
+
+      // Real-time GPU telemetry
+      auto now = std::chrono::high_resolution_clock::now();
+      long long elapsed_since_print =
+          std::chrono::duration_cast<std::chrono::milliseconds>(now - last_print).count();
+      if (!g_opencl_quiet && elapsed_since_print >= 200) {
+        last_print = now;
+        printed_progress = true;
+        long long total_ms =
+            std::chrono::duration_cast<std::chrono::milliseconds>(now - gpu_start).count();
+        double speed = (total_ms > 0 && attempts_out)
+                           ? ((double)*attempts_out / (total_ms / 1000.0))
+                           : 0.0;
+        double pct = (totalCombinations > 0)
+                         ? ((double)(offset + current_batch_size) * 100.0 / totalCombinations)
+                         : 0.0;
+        if (pct > 100.0) pct = 100.0;
+
+        std::string spdStr;
+        if (speed >= 1e9) {
+          char sbuf[32];
+          snprintf(sbuf, sizeof(sbuf), "%.2f GH/s", speed / 1e9);
+          spdStr = sbuf;
+        } else if (speed >= 1e6) {
+          char sbuf[32];
+          snprintf(sbuf, sizeof(sbuf), "%.2f MH/s", speed / 1e6);
+          spdStr = sbuf;
+        } else if (speed >= 1e3) {
+          char sbuf[32];
+          snprintf(sbuf, sizeof(sbuf), "%.2f kH/s", speed / 1e3);
+          spdStr = sbuf;
+        } else {
+          char sbuf[32];
+          snprintf(sbuf, sizeof(sbuf), "%lld H/s", (long long)speed);
+          spdStr = sbuf;
+        }
+
+        // ETA calculation
+        std::string etaStr = "--:--";
+        if (speed > 0 && totalCombinations > (offset + current_batch_size)) {
+          unsigned long long rem = totalCombinations - (offset + current_batch_size);
+          long long etaSec = (long long)(rem / speed);
+          if (etaSec < 3600) {
+            char buf[32];
+            snprintf(buf, sizeof(buf), "%02lld:%02lld", etaSec / 60, etaSec % 60);
+            etaStr = buf;
+          } else {
+            char buf[32];
+            snprintf(buf, sizeof(buf), "%02lld:%02lld:%02lld", etaSec / 3600, (etaSec % 3600) / 60, etaSec % 60);
+            etaStr = buf;
+          }
+        }
+
+        // Elapsed time
+        long long elSec = total_ms / 1000;
+        char elBuf[32];
+        snprintf(elBuf, sizeof(elBuf), "%02lld:%02lld", elSec / 60, elSec % 60);
+
+        // Visual progress bar (10 slots)
+        int barW = 10;
+        int filled = (int)(pct * barW / 100.0);
+        std::string bar = "[";
+        for (int b = 0; b < barW; b++) {
+          bar += (b < filled) ? "=" : "-";
+        }
+        bar += "]";
+
+        char pctBuf[16];
+        snprintf(pctBuf, sizeof(pctBuf), " %5.1f%%", pct);
+
+        std::cout << "\r\x1b[2K\x1b[1;32m[GPU OpenCL] L" << len << "/" << max_len
+                  << " " << bar << pctBuf
+                  << " | " << spdStr
+                  << " | ETA " << etaStr
+                  << " | " << elBuf
+                  << " \x1b[0m" << std::flush;
+      }
 
       int h_found = 0;
       clEnqueueReadBuffer(command_queue, d_found, CL_TRUE, 0, sizeof(int),
@@ -626,6 +813,9 @@ extern "C" void launch_opencl_brute_force(const char *charset,
   }
 
 cleanup:
+  if (printed_progress) {
+    std::cout << "\r\x1b[2K\r" << std::flush;
+  }
   clReleaseMemObject(d_charset);
   clReleaseMemObject(d_target);
   clReleaseMemObject(d_salt);
@@ -663,4 +853,27 @@ extern "C" void launch_opencl_hash_calc(const char *input, char *output_hex,
   clReleaseKernel(calc_kernel);
   clReleaseMemObject(d_input);
   clReleaseMemObject(d_output);
+}
+
+extern "C" const char *get_opencl_device_name() {
+  static char name[128] = "Dispositivo OpenCL";
+  if (device_id) {
+    clGetDeviceInfo(device_id, CL_DEVICE_NAME, sizeof(name), name, NULL);
+  }
+  return name;
+}
+
+extern "C" unsigned long long get_opencl_vram_bytes() {
+  cl_ulong mem = 0;
+  if (device_id) {
+    clGetDeviceInfo(device_id, CL_DEVICE_GLOBAL_MEM_SIZE, sizeof(mem), &mem, NULL);
+  }
+  return (unsigned long long)mem;
+}
+
+extern "C" void cleanupOpenCL() {
+  if (kernel) { clReleaseKernel(kernel); kernel = NULL; }
+  if (program) { clReleaseProgram(program); program = NULL; }
+  if (command_queue) { clReleaseCommandQueue(command_queue); command_queue = NULL; }
+  if (context) { clReleaseContext(context); context = NULL; }
 }

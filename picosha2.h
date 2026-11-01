@@ -355,9 +355,12 @@ template <typename InIter>
 void hash256_hex_string(InIter first, InIter last, std::string& hex_str) {
     byte_t hashed[k_digest_size];
     hash256(first, last, hashed, hashed + k_digest_size);
-    std::ostringstream oss;
-    output_hex(hashed, hashed + k_digest_size, oss);
-    hex_str.assign(oss.str());
+    const char hexDigits[] = "0123456789abcdef";
+    hex_str.resize(64);
+    for (size_t i = 0; i < 32; i++) {
+        hex_str[i * 2 + 0] = hexDigits[(hashed[i] >> 4) & 0x0F];
+        hex_str[i * 2 + 1] = hexDigits[hashed[i] & 0x0F];
+    }
 }
 
 template <typename InIter>

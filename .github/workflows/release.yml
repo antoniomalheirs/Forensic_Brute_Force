@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: windows-2019
+    runs-on: windows-2022
 
     steps:
     - uses: actions/checkout@v4
@@ -30,44 +30,54 @@ jobs:
     - name: Build
       shell: cmd
       run: |
-        echo [CPP] Compiling Host Code...
-        cl.exe /EHsc /c "Brute Force Methods.cpp" /Fo:"Brute Force Methods.obj" /I"%CUDA_PATH%\include"
+        echo [CPP] Compiling Host Code (C++20)...
+        cl.exe /EHsc /std:c++20 /O2 /c "cerberus.cpp" /Fo:"cerberus.obj" /Iinclude /I"%CUDA_PATH%\include"
         if %errorlevel% neq 0 exit /b %errorlevel%
         
-        cl.exe /EHsc /c "opencl_kernels.cpp" /Fo:"opencl_kernels.obj" /I"%CUDA_PATH%\include"
+        cl.exe /EHsc /std:c++20 /O2 /c "opencl_kernels.cpp" /Fo:"opencl_kernels.obj" /Iinclude /I"%CUDA_PATH%\include"
         if %errorlevel% neq 0 exit /b %errorlevel%
 
         echo [CUDA] Compiling GPU Kernels...
-        nvcc.exe -c "gpu_kernels.cu" -o "gpu_kernels.obj" -I"%CUDA_PATH%\include"
+        nvcc.exe -O3 -c "gpu_kernels.cu" -o "gpu_kernels.obj" -Iinclude -I"%CUDA_PATH%\include"
         if %errorlevel% neq 0 exit /b %errorlevel%
 
         echo [LINK] Linking Executable...
-        link.exe /OUT:"Brute Force Methods.exe" "Brute Force Methods.obj" "opencl_kernels.obj" "gpu_kernels.obj" cudart.lib OpenCL.lib /LIBPATH:"%CUDA_PATH%\lib\x64"
+        link.exe /OUT:"cerberus.exe" "cerberus.obj" "opencl_kernels.obj" "gpu_kernels.obj" cudart.lib OpenCL.lib /LIBPATH:lib\x64 /LIBPATH:"%CUDA_PATH%\lib\x64"
         if %errorlevel% neq 0 exit /b %errorlevel%
 
         echo [COPY] Copying CUDA Runtime DLLs...
-        copy "%CUDA_PATH%\bin\cudart64_*.dll" .
+        if exist "%CUDA_PATH%\bin\cudart64_*.dll" copy "%CUDA_PATH%\bin\cudart64_*.dll" .
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: Brute_Force_Methods
+        name: Cerberus_Forensic_Suite
         path: |
-          Brute Force Methods.exe
+          cerberus.exe
           *.dll
 
-        
     - name: Create Release
       if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
       id: create_release
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: v1.0.${{ github.run_number }}
-        name: Release v1.0.${{ github.run_number }}
+        tag_name: v3.0.${{ github.run_number }}
+        name: CERBERUS v3.0.${{ github.run_number }}
         draft: false
         prerelease: false
+        body: |
+          ## 🔱 CERBERUS v3.0 — The Triple-Headed Forensic Engine
+          Industrial-grade cryptographic recovery and forensic audit framework.
+
+          ### 🚀 What's New in v3.0:
+          - **Triple-Headed Architecture:** Potfile Cache (0ms instant recovery) + Rule-Based Mutation Dictionary + Massive GPU/CPU Parallel Brute Force.
+          - **Universal GPU Acceleration:** OpenCL 3.0 JIT kernels (~860+ MH/s on GTX 1070) + NVIDIA CUDA Native Runtime.
+          - **Comprehensive 18-Module Matrix:** MD5, SHA-1, SHA-224, SHA-256, SHA-384, SHA-512, NTLM (SAM/AD), MD4, CRC32, Base64, HMAC, PBKDF2, Bcrypt, Scrypt, and Social Media profiles.
+          - **UX & Telemetry Overhaul:** Dynamic single-line progress telemetry (ETA, hashrate, progress bar), 76-column forensic result cards, and multi-hash batch file executive reports.
+          - **DevOps & Scripting:** Added `--quiet` (`-q`) for Unix pipelines and `--json` for SIEM / automated forensic toolchains.
+          - **Built-in History Viewer:** New `cerberus history` / `cerberus potfile` command.
         files: |
-          Brute Force Methods.exe
+          cerberus.exe
           *.dll
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

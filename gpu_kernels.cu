@@ -262,6 +262,60 @@ __device__ void sha1_core(const uint8_t *data, int len, uint32_t *hash) {
     sha1_process_block(hash, buffer + off);
 }
 
+// MD4 Implementation on GPU (RFC 1320 - for NTLM & MD4)
+__device__ void md4_process_block(uint32_t *state, const uint8_t *block) {
+    uint32_t w[16];
+    for(int i=0; i<16; i++) {
+        w[i] = ((uint32_t)block[i*4]) | (((uint32_t)block[i*4+1]) << 8) |
+               (((uint32_t)block[i*4+2]) << 16) | (((uint32_t)block[i*4+3]) << 24);
+    }
+    uint32_t a = state[0], b = state[1], c = state[2], d = state[3];
+
+    #define F_4(x, y, z) (((x) & (y)) | ((~x) & (z)))
+    #define G_4(x, y, z) (((x) & (y)) | ((x) & (z)) | ((y) & (z)))
+    #define H_4(x, y, z) ((x) ^ (y) ^ (z))
+    #define R1_4(a,b,c,d,k,s) a = ROTL32((a + F_4(b,c,d) + w[k]), s)
+    #define R2_4(a,b,c,d,k,s) a = ROTL32((a + G_4(b,c,d) + w[k] + 0x5A827999), s)
+    #define R3_4(a,b,c,d,k,s) a = ROTL32((a + H_4(b,c,d) + w[k] + 0x6ED9EBA1), s)
+
+    R1_4(a,b,c,d, 0, 3); R1_4(d,a,b,c, 1, 7); R1_4(c,d,a,b, 2, 11); R1_4(b,c,d,a, 3, 19);
+    R1_4(a,b,c,d, 4, 3); R1_4(d,a,b,c, 5, 7); R1_4(c,d,a,b, 6, 11); R1_4(b,c,d,a, 7, 19);
+    R1_4(a,b,c,d, 8, 3); R1_4(d,a,b,c, 9, 7); R1_4(c,d,a,b,10, 11); R1_4(b,c,d,a,11, 19);
+    R1_4(a,b,c,d,12, 3); R1_4(d,a,b,c,13, 7); R1_4(c,d,a,b,14, 11); R1_4(b,c,d,a,15, 19);
+
+    R2_4(a,b,c,d, 0, 3); R2_4(d,a,b,c, 4, 5); R2_4(c,d,a,b, 8, 9); R2_4(b,c,d,a,12, 13);
+    R2_4(a,b,c,d, 1, 3); R2_4(d,a,b,c, 5, 5); R2_4(c,d,a,b, 9, 9); R2_4(b,c,d,a,13, 13);
+    R2_4(a,b,c,d, 2, 3); R2_4(d,a,b,c, 6, 5); R2_4(c,d,a,b,10, 9); R2_4(b,c,d,a,14, 13);
+    R2_4(a,b,c,d, 3, 3); R2_4(d,a,b,c, 7, 5); R2_4(c,d,a,b,11, 9); R2_4(b,c,d,a,15, 13);
+
+    R3_4(a,b,c,d, 0, 3); R3_4(d,a,b,c, 8, 9); R3_4(c,d,a,b, 4, 11); R3_4(b,c,d,a,12, 15);
+    R3_4(a,b,c,d, 2, 3); R3_4(d,a,b,c,10, 9); R3_4(c,d,a,b, 6, 11); R3_4(b,c,d,a,14, 15);
+    R3_4(a,b,c,d, 1, 3); R3_4(d,a,b,c, 9, 9); R3_4(c,d,a,b, 5, 11); R3_4(b,c,d,a,13, 15);
+    R3_4(a,b,c,d, 3, 3); R3_4(d,a,b,c,11, 9); R3_4(c,d,a,b, 7, 11); R3_4(b,c,d,a,15, 15);
+
+    #undef F_4
+    #undef G_4
+    #undef H_4
+    #undef R1_4
+    #undef R2_4
+    #undef R3_4
+
+    state[0] += a; state[1] += b; state[2] += c; state[3] += d;
+}
+
+__device__ void md4_core(const uint8_t *data, int len, uint32_t *digest) {
+    digest[0] = 0x67452301; digest[1] = 0xefcdab89;
+    digest[2] = 0x98badcfe; digest[3] = 0x10325476;
+    uint8_t buffer[128];
+    for(int i=0; i<128; i++) buffer[i] = 0;
+    for(int i=0; i<len && i<120; i++) buffer[i] = data[i];
+    buffer[len] = 0x80;
+    int paddedLen = (len < 56) ? 64 : 128;
+    uint64_t bits = (uint64_t)len * 8;
+    for(int i=0; i<8; i++) buffer[paddedLen-8+i] = (bits >> (i*8)) & 0xFF;
+    for(int off=0; off<paddedLen; off+=64) md4_process_block(digest, buffer+off);
+}
+
 // --- Global Kernels ---
 
 extern "C" __global__ void verify_gpu_execution(int *d_output) {
@@ -289,11 +343,12 @@ extern "C" __global__ void gpu_hash_calculator_demo(const char *input,
 // ============================================================
 extern "C" __global__ void
 gpu_brute_force_kernel(const char *charset, int charsetLen, int length,
+                       unsigned long long offset, unsigned long long maxCombinations,
                        const char *targetHash, int hashType, const char *salt,
                        int saltLen, int *d_found, char *d_result) {
   unsigned long long idx = (unsigned long long)threadIdx.x +
-                           (unsigned long long)blockIdx.x * blockDim.x;
-  if (*d_found)
+                           (unsigned long long)blockIdx.x * blockDim.x + offset;
+  if (*d_found || idx >= maxCombinations)
     return;
 
   // Build candidate password
@@ -328,6 +383,21 @@ gpu_brute_force_kernel(const char *charset, int charsetLen, int length,
     for (int i = 0; i < 5; i++)
       d_uint32_to_hex(hash_res[i], hex_output + i * 8);
     hexLen = 40;
+  } else if (hashType == 11) { // NTLM: MD4(UTF-16LE(candidate))
+    uint8_t utf16[128];
+    for (int i = 0; i < length && i < 60; i++) {
+      utf16[i * 2] = candidate[i];
+      utf16[i * 2 + 1] = 0;
+    }
+    md4_core(utf16, length * 2, hash_res);
+    for (int i = 0; i < 4; i++)
+      d_uint32_to_hex_le(hash_res[i], hex_output + i * 8);
+    hexLen = 32;
+  } else if (hashType == 12) { // MD4
+    md4_core((const uint8_t *)candidate, combinedLen, hash_res);
+    for (int i = 0; i < 4; i++)
+      d_uint32_to_hex_le(hash_res[i], hex_output + i * 8);
+    hexLen = 32;
   } else { // SHA256 (default)
     sha256_core((const uint8_t *)candidate, combinedLen, hash_res);
     for (int i = 0; i < 8; i++)
@@ -356,9 +426,11 @@ gpu_brute_force_kernel(const char *charset, int charsetLen, int length,
 // Host Wrappers
 // ============================================================
 
-extern "C" void launch_gpu_brute_force(const char *charset, const char *target,
-                                       int max_len, char *result) {
+extern "C" void launch_gpu_brute_force_ext(const char *charset, const char *target,
+                                           int max_len, char *result, int hashType,
+                                           const char *salt) {
   int charsetLen = (int)strlen(charset);
+  int saltLen = salt ? (int)strlen(salt) : 0;
   char *d_charset, *d_target, *d_result, *d_salt;
   int *d_found;
 
@@ -366,24 +438,50 @@ extern "C" void launch_gpu_brute_force(const char *charset, const char *target,
   cudaMalloc(&d_target, 129);
   cudaMalloc(&d_found, sizeof(int));
   cudaMalloc(&d_result, 128);
-  cudaMalloc(&d_salt, 1); // No salt in legacy API
+  cudaMalloc(&d_salt, saltLen + 1);
+
+  // Normalize target: preserve case for Bcrypt, uppercase prefixes, lowercase hex
+  char lowerTarget[129] = {0};
+  if (target) {
+    size_t tLen = strlen(target);
+    if (tLen >= sizeof(lowerTarget)) tLen = sizeof(lowerTarget) - 1;
+    const char *colon = strchr(target, ':');
+    size_t prefixLen = colon ? (size_t)(colon - target + 1) : 0;
+    for (size_t i = 0; i < tLen; i++) {
+      if (hashType == 6) {
+        lowerTarget[i] = target[i];
+      } else if (i < prefixLen) {
+        char c = target[i];
+        if (c >= 'a' && c <= 'z') c = c - ('a' - 'A');
+        lowerTarget[i] = c;
+      } else {
+        char c = target[i];
+        if (c >= 'A' && c <= 'Z') c = c + ('a' - 'A');
+        lowerTarget[i] = c;
+      }
+    }
+  }
 
   cudaMemcpy(d_charset, charset, charsetLen + 1, cudaMemcpyHostToDevice);
-  cudaMemcpy(d_target, target, strlen(target) + 1, cudaMemcpyHostToDevice);
+  cudaMemcpy(d_target, lowerTarget, strlen(lowerTarget) + 1, cudaMemcpyHostToDevice);
   cudaMemset(d_found, 0, sizeof(int));
-  cudaMemset(d_salt, 0, 1);
+  cudaMemcpy(d_salt, salt ? salt : "", saltLen + 1, cudaMemcpyHostToDevice);
 
   int blockSize = 256;
 
   for (int len = 1; len <= max_len; len++) {
     // Calculate total combinations for this length
     unsigned long long totalCombinations = 1;
-    for (int i = 0; i < len; i++)
+    for (int i = 0; i < len; i++) {
+      if (totalCombinations > 0xFFFFFFFFFFFFFFFFULL / charsetLen) {
+        totalCombinations = 0xFFFFFFFFFFFFFFFFULL;
+        break;
+      }
       totalCombinations *= charsetLen;
+    }
 
     // Launch enough blocks to cover the entire keyspace
-    for (unsigned long long offset = 0; offset < totalCombinations;
-         offset += (unsigned long long)blockSize * 4096) {
+    for (unsigned long long offset = 0; offset < totalCombinations;) {
       unsigned long long remaining = totalCombinations - offset;
       int numBlocks = (int)((remaining + blockSize - 1) / blockSize);
       if (numBlocks > 65535)
@@ -392,7 +490,7 @@ extern "C" void launch_gpu_brute_force(const char *charset, const char *target,
       dim3 grid(numBlocks);
       dim3 block(blockSize);
       KERNEL_LAUNCH(gpu_brute_force_kernel, grid, block, d_charset, charsetLen,
-                    len, d_target, 2 /*SHA256*/, d_salt, 0 /*no salt*/, d_found,
+                    len, offset, totalCombinations, d_target, hashType, d_salt, saltLen, d_found,
                     d_result);
       cudaDeviceSynchronize();
 
@@ -402,6 +500,7 @@ extern "C" void launch_gpu_brute_force(const char *charset, const char *target,
         cudaMemcpy(result, d_result, 128, cudaMemcpyDeviceToHost);
         goto cleanup;
       }
+      offset += (unsigned long long)numBlocks * blockSize;
     }
   }
 
@@ -411,6 +510,11 @@ cleanup:
   cudaFree(d_found);
   cudaFree(d_result);
   cudaFree(d_salt);
+}
+
+extern "C" void launch_gpu_brute_force(const char *charset, const char *target,
+                                       int max_len, char *result) {
+  launch_gpu_brute_force_ext(charset, target, max_len, result, 2 /*SHA256*/, "");
 }
 
 extern "C" void launch_cuda_test(int *h_output) {

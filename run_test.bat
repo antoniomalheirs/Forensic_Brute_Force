@@ -1,2 +1,2 @@
 @echo off
-"Brute Force Methods.exe" < input.txt
+cerberus.exe < input.txt

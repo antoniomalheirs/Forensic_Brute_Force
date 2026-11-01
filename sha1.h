@@ -13,6 +13,7 @@ class SHA1 {
 public:
     SHA1();
     void update(const std::string& s);
+    void update(const char* data, size_t len);
     void update(std::istream& is);
     std::string final();
     static std::string from_file(const std::string& filename);
@@ -178,9 +179,24 @@ inline SHA1::SHA1() : transforms(0) {
     digest[4] = 0xc3d2e1f0;
 }
 
+inline void SHA1::update(const char* data, size_t len) {
+    while (len > 0) {
+        size_t needed = BLOCK_BYTES - buffer.size();
+        size_t to_copy = (len < needed) ? len : needed;
+        buffer.append(data, to_copy);
+        data += to_copy;
+        len -= to_copy;
+        if (buffer.size() == BLOCK_BYTES) {
+            uint32_t block[BLOCK_INTS];
+            buffer_to_block(buffer, block);
+            transform(digest, block, transforms);
+            buffer.clear();
+        }
+    }
+}
+
 inline void SHA1::update(const std::string& s) {
-    std::istringstream is(s);
-    update(is);
+    update(s.data(), s.length());
 }
 
 inline void SHA1::update(std::istream& is) {
@@ -216,11 +232,16 @@ inline std::string SHA1::final() {
     block[BLOCK_INTS - 1] = (uint32_t)total_bits;
     block[BLOCK_INTS - 2] = (uint32_t)(total_bits >> 32);
     transform(digest, block, transforms);
-    std::ostringstream result;
-    for (size_t i = 0; i < sizeof(digest) / sizeof(digest[0]); i++) {
-        result << std::hex << std::setfill('0') << std::setw(8) << digest[i];
+    static const char hexChars[] = "0123456789abcdef";
+    char result[41];
+    for (int i = 0; i < 5; i++) {
+        uint32_t val = digest[i];
+        for (int b = 7; b >= 0; b--) {
+            result[i * 8 + (7 - b)] = hexChars[(val >> (b * 4)) & 0x0F];
+        }
     }
-    return result.str();
+    result[40] = '\0';
+    return std::string(result, 40);
 }
 
 inline std::string sha1(const std::string& str) {
