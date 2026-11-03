@@ -98,6 +98,10 @@ void testEncodingsAndTargets() {
   check(identifyHash("deadbeef") == HashType::CRC32, "CRC32 auto-detection");
   check(identifyHash(std::string(32, 'a')) == HashType::MD5,
         "32-hex digest uses explicit MD5 ambiguity policy");
+  check(identifyHash("Zm9v") == HashType::BASE64,
+        "Base64 auto-detection accepts printable decoded text");
+  check(identifyHash("AQID") == HashType::UNKNOWN,
+        "Base64 auto-detection rejects decoded control bytes");
   check(identifyHash("$scrypt$ln=4,r=1,p=1$YQ$AAAAAAAAAAAAAA") ==
             HashType::SCRYPT,
         "scrypt PHC prefix detection");
@@ -286,6 +290,42 @@ void testCliHelpersAndCounters() {
                           repeatedArg3, repeatedArg4};
   check(cliOptionRepeated(5, repeatedArgv, {"--salt", "-s"}),
         "CLI detects repeated option aliases");
+
+  std::ostringstream boxOutput;
+  std::streambuf *previousOutput = std::cout.rdbuf(boxOutput.rdbuf());
+  printBoxLine("SENHA", "recovered", "");
+  std::cout.rdbuf(previousOutput);
+  check(boxOutput.str().find("SENHA") != std::string::npos &&
+            boxOutput.str().find("recovered") != std::string::npos,
+        "human output formats and prints a result row");
+
+  DiscardOutputBuffer discardBuffer;
+  const auto discardedCharacter = discardBuffer.sputc('x');
+  check(discardedCharacter == std::char_traits<char>::to_int_type('x'),
+        "quiet output buffer safely discards a single-character write");
+}
+
+void testExplicitGpuFallbackGuard() {
+  Config config;
+  config.type = HashType::WPA2_PBKDF2;
+  config.target = std::string(64, '0');
+  config.saltProvided = true;
+  config.charset = "01";
+  config.maxLength = 1;
+
+  const ComputeType previousEngine = globalCompute;
+  const bool previousExplicitSelection = globalEngineExplicitlySelected;
+  globalCompute = ComputeType::OPENCL;
+  globalEngineExplicitlySelected = true;
+  globalEngineFailure.clear();
+  const bool recovered = runParallelBruteForce(config, false, nullptr, false);
+  check(!recovered, "explicit unsupported OpenCL algorithm is not recovered");
+  check(globalEngineFailure.find("algoritmo nao implementado no kernel OpenCL") !=
+            std::string::npos,
+        "explicit engine fallback guard records the reason");
+  globalCompute = previousEngine;
+  globalEngineExplicitlySelected = previousExplicitSelection;
+  globalEngineFailure.clear();
 }
 
 void testMutationAndPotfileHelpers() {
@@ -650,6 +690,19 @@ void testOpenCLFaultInjection() {
   launch_opencl_hash_calc("abc", hashOutput, 2);
   check(std::string(hashOutput) == sha256("abc"),
         "OpenCL hash calculator recovers after queue failure");
+
+  launch_opencl_hash_calc("abc", hashOutput, 11);
+  check(std::string(hashOutput) == ntlm("abc"),
+        "OpenCL NTLM hash calculator handles ASCII input");
+  const std::string nonAsciiNtlm = "caf\xC3\xA9";
+  launch_opencl_hash_calc(nonAsciiNtlm.c_str(), hashOutput, 11);
+  check(hashOutput[0] == '\0',
+        "OpenCL NTLM hash calculator rejects non-ASCII input");
+
+  const char unsafeLog[] = "build\x1B\x7F\xC3\xA9";
+  check(std::string(cerberusTestTerminalSafeOpenCLText(unsafeLog)) ==
+            "build\\x1B\\x7F\\xC3\\xA9",
+        "OpenCL build log sanitizer escapes terminal controls and non-ASCII bytes");
   cleanupOpenCL();
   set_opencl_quiet(0);
 }
@@ -793,6 +846,7 @@ int main() {
   testEncodingsAndTargets();
   testScryptAndBcryptValidation();
   testCliHelpersAndCounters();
+  testExplicitGpuFallbackGuard();
   testMutationAndPotfileHelpers();
   testStreamsAndBatchFiles();
   testOptionalGpuKernelBoundaries();

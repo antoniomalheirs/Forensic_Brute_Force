@@ -34,6 +34,7 @@ enum CerberusCudaTestFault {
 #if defined(CERBERUS_TESTING)
 extern "C" void cerberusOpenCLTestFailAfter(int fault, int successfulCalls);
 extern "C" void cerberusOpenCLTestResetFault();
+extern "C" const char *cerberusTestTerminalSafeOpenCLText(const char *text);
 extern "C" void cerberusCudaTestFailAfter(int fault, int successfulCalls);
 extern "C" void cerberusCudaTestResetFault();
 

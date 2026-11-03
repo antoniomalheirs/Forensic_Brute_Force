@@ -39,6 +39,16 @@ class EntrypointTests(CerberusCase):
         self.assertIn("MODO INTUITIVO ZERO-CLICK", completed.stdout)
         self.assertIn("Encerrando sessao", completed.stdout)
 
+    def test_interactive_menu_can_switch_to_cpu_engine(self) -> None:
+        completed = subprocess.run(
+            [str(EXE)], cwd=self.cwd, input="cpu\n0\n", capture_output=True,
+            text=True, encoding="utf-8", errors="replace", timeout=30,
+            check=False,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertIn("Motor alterado para CPU", completed.stdout)
+        self.assertIn("Encerrando sessao", completed.stdout)
+
     def test_setup_help_and_existing_runtime_diagnostic(self) -> None:
         if os.name != "nt":
             self.skipTest("setup.bat is Windows-only")

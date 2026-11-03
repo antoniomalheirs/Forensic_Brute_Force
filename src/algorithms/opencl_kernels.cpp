@@ -680,12 +680,6 @@ static cl_int finishOpenCLQueue(cl_command_queue queue) {
   return clFinish(queue);
 }
 
-void checkErr(cl_int err, const char *name) {
-  if (err != CL_SUCCESS) {
-    std::cerr << "[OpenCL] ERROR: " << name << " (" << err << ")" << std::endl;
-  }
-}
-
 // --- Public Interface ---
 static int g_opencl_quiet = 0;
 extern "C" void set_opencl_quiet(int q) { g_opencl_quiet = q; }
@@ -707,6 +701,14 @@ static std::string terminalSafeOpenCLText(const char *text) {
   }
   return safe;
 }
+
+#if defined(CERBERUS_TESTING)
+extern "C" const char *cerberusTestTerminalSafeOpenCLText(const char *text) {
+  static std::string safe;
+  safe = terminalSafeOpenCLText(text);
+  return safe.c_str();
+}
+#endif
 
 static void releaseOpenCLObjects() {
   if (kernel) { clReleaseKernel(kernel); kernel = NULL; }

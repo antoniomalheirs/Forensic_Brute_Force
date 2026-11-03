@@ -406,6 +406,20 @@ class WorkflowTests(CerberusCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(completed.stdout.strip(), f"{target}:quiet%3Asecret")
 
+    def test_human_success_output_includes_recovered_credential(self) -> None:
+        candidate = "human-output-secret"
+        target = hashlib.sha256(candidate.encode()).hexdigest()
+        self.write_file("wordlist.txt", candidate + "\n")
+        completed = self.invoke(
+            "crack", target, "--algo", "sha256", "--engine", "cpu",
+            "--wordlist", "wordlist.txt", "--charset", "1", "--max-len", "1",
+            "--no-potfile",
+        )
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertIn("HASH ALVO", completed.stdout)
+        self.assertIn("SENHA", completed.stdout)
+        self.assertIn(candidate, completed.stdout)
+
     def test_mixed_batch_reports_exact_per_target_results(self) -> None:
         a = hashlib.sha256(b"batch-alpha").hexdigest()
         b = hashlib.sha1(b"batch-bravo").hexdigest()
