@@ -49,6 +49,14 @@ class EntrypointTests(CerberusCase):
         self.assertIn("Motor alterado para CPU", completed.stdout)
         self.assertIn("Encerrando sessao", completed.stdout)
 
+    def test_human_doctor_reports_runtime_and_release_data_paths(self) -> None:
+        completed = self.invoke("doctor")
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertIn("Configuracao detectada neste ambiente", completed.stdout)
+        self.assertIn("Wordlist", completed.stdout)
+        self.assertIn("Saltlist", completed.stdout)
+        self.assertIn("Potfile", completed.stdout)
+
     def test_setup_help_and_existing_runtime_diagnostic(self) -> None:
         if os.name != "nt":
             self.skipTest("setup.bat is Windows-only")

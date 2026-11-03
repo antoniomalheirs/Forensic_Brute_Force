@@ -420,6 +420,54 @@ class WorkflowTests(CerberusCase):
         self.assertIn("SENHA", completed.stdout)
         self.assertIn(candidate, completed.stdout)
 
+    def test_human_exhaustion_output_reports_no_recovery(self) -> None:
+        target = hashlib.sha256(b"outside-the-digit-keyspace").hexdigest()
+        completed = self.invoke(
+            "crack", target, "--algo", "sha256", "--engine", "cpu",
+            "--no-dict", "--charset", "1", "--max-len", "1",
+            "--no-potfile",
+        )
+        self.assertEqual(completed.returncode, 1, completed.stdout + completed.stderr)
+        self.assertIn("ESGOTADO: SENHA", completed.stdout)
+        self.assertIn("TENTATIVAS", completed.stdout)
+        self.assertNotIn("[NOT_FOUND]", completed.stdout)
+
+    def test_human_potfile_hit_and_history_display(self) -> None:
+        candidate = "human-cache-proof"
+        target = hashlib.sha256(candidate.encode()).hexdigest()
+        self.write_file("wordlist.txt", candidate + "\n")
+        args = (
+            "crack", target, "--algo", "sha256", "--engine", "cpu",
+            "--wordlist", "wordlist.txt", "--charset", "1", "--max-len", "1",
+        )
+        first = self.invoke(*args)
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        cached = self.invoke(*args)
+        self.assertEqual(cached.returncode, 0, cached.stdout + cached.stderr)
+        self.assertIn("POTFILE CACHE HIT", cached.stdout)
+        self.assertIn("TEMPO CACHE", cached.stdout)
+
+        with (self.cwd / "cracked_passwords.txt").open("a", encoding="utf-8") as potfile:
+            potfile.write("v3|bad%Q0||MD5|ignored\n")
+        history = self.invoke("history")
+        self.assertEqual(history.returncode, 1, history.stdout + history.stderr)
+        self.assertIn("HISTORICO DE CREDENCIAIS", history.stdout)
+        self.assertIn(candidate[:13] + "...", history.stdout)
+        self.assertIn("registros invalidos", history.stderr)
+
+    def test_human_batch_output_reports_recovered_target(self) -> None:
+        candidate = "human-batch-proof"
+        target = hashlib.sha256(candidate.encode()).hexdigest()
+        self.write_file("wordlist.txt", candidate + "\n")
+        self.write_file("targets.txt", target + "\n")
+        completed = self.invoke(
+            "file", "targets.txt", "--engine", "cpu", "--wordlist", "wordlist.txt",
+            "--charset", "1", "--max-len", "1", "--no-potfile",
+        )
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertIn("LOTE FORENSE", completed.stdout)
+        self.assertIn(candidate, completed.stdout)
+
     def test_mixed_batch_reports_exact_per_target_results(self) -> None:
         a = hashlib.sha256(b"batch-alpha").hexdigest()
         b = hashlib.sha1(b"batch-bravo").hexdigest()

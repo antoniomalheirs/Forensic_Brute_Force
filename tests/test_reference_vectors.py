@@ -47,6 +47,15 @@ class IndependentReferenceTests(CerberusCase):
             hashlib.pbkdf2_hmac("sha1", password.encode(), key.encode(), 4096, 32).hex(),
         )
 
+    def test_human_hash_command_renders_reference_matrix(self) -> None:
+        password = "human-hash-reference"
+        completed = self.invoke("hash", password, "--salt", "human-key")
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertIn("MATRIZ CRIPTOGRAFICA FORENSE", completed.stdout)
+        self.assertIn(hashlib.md5(password.encode()).hexdigest(), completed.stdout)
+        self.assertIn(hashlib.sha256(password.encode()).hexdigest(), completed.stdout)
+        self.assertIn(base64.b64encode(password.encode()).decode(), completed.stdout)
+
     def test_hash_matrix_matches_independent_oracles_at_padding_boundaries(self) -> None:
         rng = random.Random(0xCEB3)
         alphabet = string.ascii_letters + string.digits + " _!@$%^&*()+=:/.,?"
