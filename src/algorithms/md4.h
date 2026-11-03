@@ -115,20 +115,53 @@ inline std::string md4(const std::string &input) {
 
 // NTLM (Windows NT Hash): MD4 of UTF-16LE password bytes
 inline std::string ntlm(const std::string &password) {
-    uint8_t stackUtf16[128];
-    uint8_t *utf16Ptr = stackUtf16;
-    std::vector<uint8_t> heapUtf16;
-    size_t utf16Len = password.length() * 2;
-    if (utf16Len > sizeof(stackUtf16)) {
-        heapUtf16.resize(utf16Len);
-        utf16Ptr = heapUtf16.data();
-    }
-    for (size_t i = 0; i < password.length(); i++) {
-        utf16Ptr[i * 2]     = static_cast<uint8_t>(password[i]);
-        utf16Ptr[i * 2 + 1] = 0;
+    std::vector<uint8_t> utf16;
+    utf16.reserve(password.length() * 2);
+    for (size_t i = 0; i < password.length();) {
+        const uint8_t first = static_cast<uint8_t>(password[i++]);
+        uint32_t codepoint = 0;
+        size_t continuationCount = 0;
+        if (first <= 0x7f) {
+            codepoint = first;
+        } else if (first >= 0xc2 && first <= 0xdf) {
+            codepoint = first & 0x1f;
+            continuationCount = 1;
+        } else if (first >= 0xe0 && first <= 0xef) {
+            codepoint = first & 0x0f;
+            continuationCount = 2;
+        } else if (first >= 0xf0 && first <= 0xf4) {
+            codepoint = first & 0x07;
+            continuationCount = 3;
+        } else {
+            return "";
+        }
+        if (i + continuationCount > password.length()) return "";
+        for (size_t j = 0; j < continuationCount; ++j) {
+            const uint8_t next = static_cast<uint8_t>(password[i++]);
+            if ((next & 0xc0) != 0x80) return "";
+            codepoint = (codepoint << 6) | (next & 0x3f);
+        }
+        if ((continuationCount == 1 && codepoint < 0x80) ||
+            (continuationCount == 2 && codepoint < 0x800) ||
+            (continuationCount == 3 && codepoint < 0x10000) ||
+            (codepoint >= 0xd800 && codepoint <= 0xdfff) || codepoint > 0x10ffff)
+            return "";
+
+        if (codepoint <= 0xffff) {
+            utf16.push_back(static_cast<uint8_t>(codepoint & 0xff));
+            utf16.push_back(static_cast<uint8_t>((codepoint >> 8) & 0xff));
+        } else {
+            codepoint -= 0x10000;
+            uint16_t high = static_cast<uint16_t>(0xd800 + (codepoint >> 10));
+            uint16_t low = static_cast<uint16_t>(0xdc00 + (codepoint & 0x3ff));
+            utf16.push_back(static_cast<uint8_t>(high & 0xff));
+            utf16.push_back(static_cast<uint8_t>(high >> 8));
+            utf16.push_back(static_cast<uint8_t>(low & 0xff));
+            utf16.push_back(static_cast<uint8_t>(low >> 8));
+        }
     }
     uint8_t digest[16];
-    md4_internal::md4_raw(utf16Ptr, utf16Len, digest);
+    md4_internal::md4_raw(utf16.data(), utf16.size(), digest);
     static const char hexChars[] = "0123456789abcdef";
     char out[33];
     for (int i = 0; i < 16; i++) {

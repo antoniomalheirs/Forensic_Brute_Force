@@ -1,6 +1,7 @@
 #ifndef MD5_H
 #define MD5_H
 
+#include <algorithm>
 #include <cstring>
 #include <iostream>
 #include <string>
@@ -114,12 +115,22 @@ inline MD5::MD5() { init(); }
 // Construct a MD5 object with a string.
 inline MD5::MD5(const std::string &text) {
   init();
-  update(text.c_str(), (size_type)text.length());
+  // update() accepts a 32-bit length. Feed large strings in bounded chunks
+  // instead of truncating their size at the call site.
+  const size_t chunkLimit = 1024 * 1024;
+  for (size_t offset = 0; offset < text.length();) {
+    const size_t chunk = std::min(chunkLimit, text.length() - offset);
+    update(reinterpret_cast<const unsigned char *>(text.data() + offset),
+           static_cast<size_type>(chunk));
+    offset += chunk;
+  }
   finalize();
 }
 
 inline void MD5::init() {
   finalized = false;
+  std::memset(buffer, 0, sizeof buffer);
+  std::memset(digest, 0, sizeof digest);
   count[0] = 0;
   count[1] = 0;
   // load magic initialization constants.
@@ -230,6 +241,9 @@ inline void MD5::transform(const uint1 block[blocksize]) {
 }
 
 inline void MD5::update(const unsigned char *buf, size_type length) {
+  if (finalized || length == 0)
+    return;
+
   // compute number of bytes mod 64
   size_type index = count[0] / 8 % blocksize;
 
@@ -244,18 +258,21 @@ inline void MD5::update(const unsigned char *buf, size_type length) {
 
   // transform as many times as possible.
   if (length >= firstpart) {
-    memcpy(&buffer[index], buf, firstpart);
+    std::memcpy(&buffer[index], buf, firstpart);
     transform(buffer);
+    i = firstpart;
 
-    for (i = firstpart; i + blocksize <= length; i += blocksize)
-      transform(&buf[i]);
+    if (length >= blocksize) {
+      for (i = firstpart; i <= length - blocksize; i += blocksize)
+        transform(&buf[i]);
+    }
 
     index = 0;
   } else
     i = 0;
 
   // buffer remaining input
-  memcpy(&buffer[index], &buf[i], length - i);
+  std::memcpy(&buffer[index], &buf[i], length - i);
 }
 
 inline void MD5::update(const char *buf, size_type length) {
@@ -315,5 +332,23 @@ inline std::ostream &operator<<(std::ostream &out, MD5 &md5) {
 inline std::string md5(const std::string &str) {
   MD5 md5 = MD5(str);
   return md5.hexdigest();
+}
+
+inline void md5UpdateInChunks(MD5 &context, const std::string &part) {
+  const size_t chunkLimit = 1024 * 1024;
+  for (size_t offset = 0; offset < part.size();) {
+    const size_t chunk = std::min(chunkLimit, part.size() - offset);
+    context.update(reinterpret_cast<const unsigned char *>(part.data() + offset),
+                   static_cast<MD5::size_type>(chunk));
+    offset += chunk;
+  }
+}
+
+inline std::string md5(const std::string &input, const std::string &suffix) {
+  MD5 context;
+  md5UpdateInChunks(context, input);
+  md5UpdateInChunks(context, suffix);
+  context.finalize();
+  return context.hexdigest();
 }
 #endif

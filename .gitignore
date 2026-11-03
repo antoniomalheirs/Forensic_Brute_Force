@@ -1,46 +1,72 @@
-# === Sentinel Data Solutions — .gitignore ===
+# CERBERUS — local files excluded from GitHub
 
-# Build Artifacts
-*.obj
-*.o
-*.exe
-*.pdb
-*.ilk
-*.exp
-*.lib
-!lib/x64/OpenCL.lib
-*.dll
-
-# Visual Studio Root Directories
-/.vs/
+# Build caches and generated Visual Studio outputs
+/.build/
+/build/.cache/
+/Debug/
+/Release/
 /x64/
 /x86/
-/Brute*/
-/[Dd]ebug/
-/[Rr]elease/
-*.vcxproj.user
+/build/windows/Debug/
+/build/windows/Release/
+/build/windows/x64/
+/build/windows/x86/
+/Brute Fo.*/
+
+# Visual Studio state and compiler intermediates
+.vs/
+ipch/
 *.suo
+*.user
+*.userosscache
+*.sln.docstates
 *.sdf
 *.opensdf
 *.opendb
-ipch/
+*.VC.db
+*.VC.VC.opendb
 *.aps
 *.ncb
-*.user
-*.log
-*.tlog
+*.obj
+*.o
+*.pch
+*.pdb
+*.ilk
+*.exp
+*.tlog/
+*.lastbuildstate
+*.recipe
 
-# CUDA
+# Generated libraries; keep the OpenCL import library required by this project
+*.lib
+!dependencies/opencl/lib/x64/OpenCL.lib
+
+# Root-level executable and CUDA runtime copied by the local build
+/cerberus.exe
+/cudart64_*.dll
+
+# CUDA compiler outputs
 *.cubin
 *.ptx
 *.fatbin
+tmpxft_*
 
-# Runtime / Debug Logs
-debug_log.txt
+# Local upstream checkout (the pinned build sources are under dependencies/)
+/third_party/
+
+# Local run data and diagnostics; these can contain recovered credentials
 cracked_passwords.txt
 local_cracked.txt
-
-# Misc
+debug_log.txt
+*.log
 *.binlog
+
+# OS/editor temporary files
+.DS_Store
+Thumbs.db
+desktop.ini
 ~$*
 *~
+*.swp
+*.swo
+*.tmp

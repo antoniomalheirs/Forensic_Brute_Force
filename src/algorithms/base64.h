@@ -1,11 +1,11 @@
 #ifndef BASE64_H
 #define BASE64_H
 
+#include <cstddef>
 #include <string>
 #include <vector>
-#include <cctype>
 
-inline std::string base64_encode(unsigned char const* bytes_to_encode, unsigned int in_len);
+inline std::string base64_encode(unsigned char const* bytes_to_encode, std::size_t in_len);
 inline std::string base64_decode(std::string const& encoded_string);
 
 // Implementation
@@ -15,17 +15,19 @@ static const std::string base64_chars =
 "0123456789+/";
 
 static inline bool is_base64(unsigned char c) {
-    return (isalnum(c) || (c == '+') || (c == '/'));
+    return ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+            (c >= '0' && c <= '9') || c == '+' || c == '/');
 }
 
-inline std::string base64_encode(unsigned char const* bytes_to_encode, unsigned int in_len) {
+inline std::string base64_encode(unsigned char const* bytes_to_encode, std::size_t in_len) {
     std::string ret;
     int i = 0;
     int j = 0;
     unsigned char char_array_3[3];
     unsigned char char_array_4[4];
 
-    while (in_len--) {
+    while (in_len > 0) {
+        --in_len;
         char_array_3[i++] = *(bytes_to_encode++);
         if (i == 3) {
             char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
@@ -59,14 +61,15 @@ inline std::string base64_encode(unsigned char const* bytes_to_encode, unsigned 
 }
 
 inline std::string base64_decode(std::string const& encoded_string) {
-    int in_len = (int)encoded_string.size();
+    const std::size_t in_len = encoded_string.size();
     int i = 0;
     int j = 0;
-    int in_ = 0;
+    std::size_t in_ = 0;
     unsigned char char_array_4[4], char_array_3[3];
     std::string ret;
 
-    while (in_len-- && (encoded_string[in_] != '=') && is_base64((unsigned char)encoded_string[in_])) {
+    while (in_ < in_len && encoded_string[in_] != '=' &&
+           is_base64((unsigned char)encoded_string[in_])) {
         char_array_4[i++] = encoded_string[in_]; in_++;
         if (i == 4) {
             for (i = 0; i < 4; i++)

@@ -1,6 +1,8 @@
 #ifndef SHA512_H
 #define SHA512_H
 
+#include <algorithm>
+#include <cstddef>
 #include <cstring>
 #include <fstream>
 #include <iomanip>
@@ -28,6 +30,8 @@ protected:
   unsigned long long m_len;
   unsigned char m_block[2 * SHA512_BLOCK_SIZE];
   uint64 m_h[8];
+  bool finalized;
+  unsigned char finalizedDigest[DIGEST_SIZE];
 };
 
 inline const SHA512::uint64 SHA512::sha512_k[] = {
@@ -77,10 +81,12 @@ inline void SHA512::transform(const unsigned char *message, unsigned int block_n
   uint64 wv[8];
   uint64 t1, t2;
   const unsigned char *sub_block;
-  int i, j;
+  unsigned int i;
+  int j;
 
-  for (i = 0; i < (int)block_nb; i++) {
-    sub_block = message + (i << 7);
+  for (i = 0; i < block_nb; i++) {
+    sub_block = message +
+                (static_cast<std::size_t>(i) * SHA512_BLOCK_SIZE);
 
     for (j = 0; j < 16; j++) {
       w[j] = ((uint64)sub_block[j * 8] << 56) |
@@ -133,9 +139,13 @@ inline void SHA512::init() {
   m_h[7] = 0x5be0cd19137e2179ULL;
   m_len = 0;
   m_tot_len = 0;
+  finalized = false;
 }
 
 inline void SHA512::update(const unsigned char *message, unsigned int len) {
+  if (finalized || len == 0)
+    return;
+
   unsigned int block_nb;
   unsigned int new_len, rem_len, tmp_len;
   const unsigned char *shifted_message;
@@ -143,7 +153,7 @@ inline void SHA512::update(const unsigned char *message, unsigned int len) {
   tmp_len = (unsigned int)(SHA512_BLOCK_SIZE - m_len);
   rem_len = len < tmp_len ? len : tmp_len;
 
-  memcpy(&m_block[m_len], message, rem_len);
+  std::memcpy(&m_block[m_len], message, rem_len);
 
   if (m_len + len < SHA512_BLOCK_SIZE) {
     m_len += len;
@@ -160,13 +170,18 @@ inline void SHA512::update(const unsigned char *message, unsigned int len) {
 
   rem_len = new_len % SHA512_BLOCK_SIZE;
 
-  memcpy(m_block, &shifted_message[block_nb << 7], rem_len);
+  std::memcpy(m_block, &shifted_message[block_nb << 7], rem_len);
 
   m_len = rem_len;
   m_tot_len += ((uint64)block_nb + 1) << 7;
 }
 
 inline void SHA512::final(unsigned char *digest) {
+  if (finalized) {
+    std::memcpy(digest, finalizedDigest, DIGEST_SIZE);
+    return;
+  }
+
   uint64 total_bits = (m_tot_len + m_len) * 8;
   unsigned int pm_len = (m_len < 112) ? 128 : 256;
   unsigned int block_nb = pm_len / 128;
@@ -186,14 +201,23 @@ inline void SHA512::final(unsigned char *digest) {
       digest[i * 8 + j] = (unsigned char)((m_h[i] >> ((7 - j) * 8)) & 0xFF);
     }
   }
+  std::memcpy(finalizedDigest, digest, DIGEST_SIZE);
+  finalized = true;
 }
 
-inline std::string sha512(const std::string &input) {
+inline void sha512UpdateInChunks(SHA512 &context, const std::string &part) {
+  const size_t chunkLimit = 1024 * 1024;
+  for (size_t offset = 0; offset < part.length();) {
+    const size_t chunk = std::min(chunkLimit, part.length() - offset);
+    context.update(reinterpret_cast<const unsigned char *>(part.data() + offset),
+                   static_cast<unsigned int>(chunk));
+    offset += chunk;
+  }
+}
+
+inline std::string sha512FinalizeHex(SHA512 &context) {
   unsigned char digest[SHA512::DIGEST_SIZE];
-  SHA512 ctx;
-  ctx.init();
-  ctx.update((const unsigned char *)input.data(), (unsigned int)input.length());
-  ctx.final(digest);
+  context.final(digest);
 
   static const char hexChars[] = "0123456789abcdef";
   char buf[129];
@@ -206,11 +230,34 @@ inline std::string sha512(const std::string &input) {
   return std::string(buf, 128);
 }
 
+inline std::string sha512(const std::string &input) {
+  SHA512 context;
+  context.init();
+  sha512UpdateInChunks(context, input);
+  return sha512FinalizeHex(context);
+}
+
+inline std::string sha512(const std::string &input,
+                          const std::string &suffix) {
+  SHA512 context;
+  context.init();
+  sha512UpdateInChunks(context, input);
+  sha512UpdateInChunks(context, suffix);
+  return sha512FinalizeHex(context);
+}
+
 class SHA384 : public SHA512 {
 public:
+  void final(unsigned char *digest) {
+    unsigned char fullDigest[SHA512::DIGEST_SIZE];
+    SHA512::final(fullDigest);
+    std::memcpy(digest, fullDigest, DIGEST_SIZE);
+  }
+
   void init() {
     m_tot_len = 0;
     m_len = 0;
+    finalized = false;
     m_h[0] = 0xcbbb9d5dc1059ed8ULL;
     m_h[1] = 0x629a292a367cd507ULL;
     m_h[2] = 0x9159015a3070dd17ULL;
@@ -227,7 +274,13 @@ inline std::string sha384(const std::string &input) {
   unsigned char digest[64];
   SHA384 ctx;
   ctx.init();
-  ctx.update((const unsigned char *)input.data(), (unsigned int)input.length());
+  const size_t chunkLimit = 1024 * 1024;
+  for (size_t offset = 0; offset < input.length();) {
+    const size_t chunk = std::min(chunkLimit, input.length() - offset);
+    ctx.update(reinterpret_cast<const unsigned char *>(input.data() + offset),
+               static_cast<unsigned int>(chunk));
+    offset += chunk;
+  }
   ctx.final(digest);
 
   static const char hexChars[] = "0123456789abcdef";

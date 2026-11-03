@@ -1,0 +1,184 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <VCProjectVersion>17.0</VCProjectVersion>
+    <Keyword>Win32Proj</Keyword>
+    <ProjectGuid>{163e8e86-6176-4b86-a8e9-b60ad49ba757}</ProjectGuid>
+    <RootNamespace>cerberus</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>Application</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>Unicode</CharacterSet>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <ImportGroup Label="ExtensionSettings">
+  </ImportGroup>
+  <ImportGroup Label="Shared">
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup>
+    <CerberusCudaArch Condition="'$(CerberusCudaArch)'==''">sm_61</CerberusCudaArch>
+    <CerberusCudaDefine Condition="Exists('$(CUDA_PATH)\bin\nvcc.exe') and Exists('$(CUDA_PATH)\lib\x64\cudart.lib')">ENABLE_CUDA;</CerberusCudaDefine>
+    <CerberusCudaLinkLib Condition="Exists('$(CUDA_PATH)\bin\nvcc.exe') and Exists('$(CUDA_PATH)\lib\x64\cudart.lib')">$(IntDir)gpu_kernels.obj;cudart.lib;</CerberusCudaLinkLib>
+    <CerberusCudaHostRuntime Condition="'$(Configuration)'=='Debug'">-Xcompiler=/MTd</CerberusCudaHostRuntime>
+    <CerberusCudaHostRuntime Condition="'$(Configuration)'=='Release'">-Xcompiler=/MT</CerberusCudaHostRuntime>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>_DEBUG;_CONSOLE;ENABLE_OPENCL;$(CerberusCudaDefine)%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\..\dependencies\opencl\include;$(CUDA_PATH)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalDependencies>$(CerberusCudaLinkLib)%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(CUDA_PATH)\lib\x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+    </Link>
+    <PostBuildEvent>
+      <Command>if not exist "$(OutDir)data\lists" mkdir "$(OutDir)data\lists"
+if errorlevel 1 exit /b 1
+copy /Y "$(ProjectDir)..\..\data\lists\wordlist.txt" "$(OutDir)data\lists\wordlist.txt" &gt;nul
+if errorlevel 1 exit /b 1
+copy /Y "$(ProjectDir)..\..\setup.bat" "$(OutDir)setup.bat" &gt;nul
+if errorlevel 1 exit /b 1
+copy /Y "$(ProjectDir)..\..\data\lists\saltlist.txt" "$(OutDir)data\lists\saltlist.txt" &gt;nul
+if errorlevel 1 exit /b 1
+copy /Y "$(ProjectDir)..\..\README.md" "$(OutDir)README.md" &gt;nul
+if errorlevel 1 exit /b 1
+copy /Y "$(ProjectDir)..\..\LICENSE" "$(OutDir)LICENSE" &gt;nul
+if errorlevel 1 exit /b 1
+if not exist "$(OutDir)licenses" mkdir "$(OutDir)licenses"
+if errorlevel 1 exit /b 1
+copy /Y "$(ProjectDir)..\..\licenses\LICENSE-APACHE-2.0.txt" "$(OutDir)licenses\LICENSE-APACHE-2.0.txt" &gt;nul
+if errorlevel 1 exit /b 1
+copy /Y "$(ProjectDir)..\..\licenses\LICENSE-MIT-picosha2.txt" "$(OutDir)licenses\LICENSE-MIT-picosha2.txt" &gt;nul
+if errorlevel 1 exit /b 1
+copy /Y "$(ProjectDir)..\..\licenses\LICENSE-crypt_blowfish.txt" "$(OutDir)licenses\LICENSE-crypt_blowfish.txt" &gt;nul
+if errorlevel 1 exit /b 1
+copy /Y "$(ProjectDir)..\..\licenses\THIRD_PARTY_NOTICES.md" "$(OutDir)licenses\THIRD_PARTY_NOTICES.md" &gt;nul
+if errorlevel 1 exit /b 1
+if "$(CerberusCudaDefine)"=="ENABLE_CUDA;" (
+  if not exist "$(CUDA_PATH)\bin\cudart64_*.dll" exit /b 1
+  copy /Y "$(CUDA_PATH)\bin\cudart64_*.dll" "$(OutDir)" &gt;nul
+  if errorlevel 1 exit /b 1
+)</Command>
+    </PostBuildEvent>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <SDLCheck>true</SDLCheck>
+      <PreprocessorDefinitions>NDEBUG;_CONSOLE;ENABLE_OPENCL;$(CerberusCudaDefine)%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\..\dependencies\opencl\include;$(CUDA_PATH)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+      <ConformanceMode>true</ConformanceMode>
+      <LanguageStandard>stdcpp20</LanguageStandard>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+    </ClCompile>
+    <Link>
+      <SubSystem>Console</SubSystem>
+      <GenerateDebugInformation>true</GenerateDebugInformation>
+      <AdditionalDependencies>$(CerberusCudaLinkLib)%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>$(CUDA_PATH)\lib\x64;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+    </Link>
+    <PostBuildEvent>
+      <Command>if not exist "$(OutDir)data\lists" mkdir "$(OutDir)data\lists"
+if errorlevel 1 exit /b 1
+copy /Y "$(ProjectDir)..\..\data\lists\wordlist.txt" "$(OutDir)data\lists\wordlist.txt" &gt;nul
+if errorlevel 1 exit /b 1
+copy /Y "$(ProjectDir)..\..\setup.bat" "$(OutDir)setup.bat" &gt;nul
+if errorlevel 1 exit /b 1
+copy /Y "$(ProjectDir)..\..\data\lists\saltlist.txt" "$(OutDir)data\lists\saltlist.txt" &gt;nul
+if errorlevel 1 exit /b 1
+copy /Y "$(ProjectDir)..\..\README.md" "$(OutDir)README.md" &gt;nul
+if errorlevel 1 exit /b 1
+copy /Y "$(ProjectDir)..\..\LICENSE" "$(OutDir)LICENSE" &gt;nul
+if errorlevel 1 exit /b 1
+if not exist "$(OutDir)licenses" mkdir "$(OutDir)licenses"
+if errorlevel 1 exit /b 1
+copy /Y "$(ProjectDir)..\..\licenses\LICENSE-APACHE-2.0.txt" "$(OutDir)licenses\LICENSE-APACHE-2.0.txt" &gt;nul
+if errorlevel 1 exit /b 1
+copy /Y "$(ProjectDir)..\..\licenses\LICENSE-MIT-picosha2.txt" "$(OutDir)licenses\LICENSE-MIT-picosha2.txt" &gt;nul
+if errorlevel 1 exit /b 1
+copy /Y "$(ProjectDir)..\..\licenses\LICENSE-crypt_blowfish.txt" "$(OutDir)licenses\LICENSE-crypt_blowfish.txt" &gt;nul
+if errorlevel 1 exit /b 1
+copy /Y "$(ProjectDir)..\..\licenses\THIRD_PARTY_NOTICES.md" "$(OutDir)licenses\THIRD_PARTY_NOTICES.md" &gt;nul
+if errorlevel 1 exit /b 1
+if "$(CerberusCudaDefine)"=="ENABLE_CUDA;" (
+  if not exist "$(CUDA_PATH)\bin\cudart64_*.dll" exit /b 1
+  copy /Y "$(CUDA_PATH)\bin\cudart64_*.dll" "$(OutDir)" &gt;nul
+  if errorlevel 1 exit /b 1
+)</Command>
+    </PostBuildEvent>
+  </ItemDefinitionGroup>
+  <ItemGroup>
+    <CustomBuild Include="..\..\src\algorithms\gpu_kernels.cu" Condition="Exists('$(CUDA_PATH)\bin\nvcc.exe') and Exists('$(CUDA_PATH)\lib\x64\cudart.lib')">
+        <FileType>Document</FileType>
+        <Command>"$(CUDA_PATH)\bin\nvcc.exe" -allow-unsupported-compiler -arch=$(CerberusCudaArch) $(CerberusCudaHostRuntime) -c "%(FullPath)" -o "$(IntDir)%(Filename).obj" -m64</Command>
+        <Outputs>$(IntDir)%(Filename).obj</Outputs>
+        <Message>Compiling CUDA Kernels</Message>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="..\..\src\cerberus.cpp" />
+    <ClCompile Include="..\..\src\algorithms\opencl_kernels.cpp" />
+    <ClCompile Include="..\..\dependencies\crypt_blowfish\crypt_blowfish.c" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\..\src\algorithms\base64.h" />
+    <ClInclude Include="..\..\src\algorithms\crc32.h" />
+    <ClInclude Include="..\..\src\algorithms\hmac.h" />
+    <ClInclude Include="..\..\src\algorithms\md4.h" />
+    <ClInclude Include="..\..\src\algorithms\md5.h" />
+    <ClInclude Include="..\..\src\algorithms\picosha2.h" />
+    <ClInclude Include="..\..\src\algorithms\sha1.h" />
+    <ClInclude Include="..\..\src\algorithms\sha224.h" />
+    <ClInclude Include="..\..\src\algorithms\sha512.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\..\data\lists\saltlist.txt" />
+    <None Include="..\..\data\lists\wordlist.txt" />
+    <None Include="..\..\licenses\LICENSE-APACHE-2.0.txt" />
+    <None Include="..\..\licenses\LICENSE-MIT-picosha2.txt" />
+    <None Include="..\..\licenses\LICENSE-crypt_blowfish.txt" />
+    <None Include="..\..\licenses\THIRD_PARTY_NOTICES.md" />
+  </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
+</Project>

@@ -2,6 +2,7 @@
 #define SHA1_H
 
 #include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -16,12 +17,15 @@ public:
     void update(const char* data, size_t len);
     void update(std::istream& is);
     std::string final();
+    void final(unsigned char digestOut[20]);
     static std::string from_file(const std::string& filename);
 
 private:
     uint32_t digest[5];
     std::string buffer;
     uint64_t transforms;
+    bool finalized;
+    unsigned char finalizedDigest[20];
 };
 
 // Implementation
@@ -164,14 +168,18 @@ inline void transform(uint32_t digest[], uint32_t block[BLOCK_INTS], uint64_t& t
 
 inline void buffer_to_block(const std::string& buffer, uint32_t block[BLOCK_INTS]) {
     for (size_t i = 0; i < BLOCK_INTS; i++) {
-        block[i] = (buffer[4 * i + 3] & 0xff)
-                 | (buffer[4 * i + 2] & 0xff) << 8
-                 | (buffer[4 * i + 1] & 0xff) << 16
-                 | (buffer[4 * i + 0] & 0xff) << 24;
+        block[i] = static_cast<uint32_t>(
+                       static_cast<unsigned char>(buffer[4 * i + 3])) |
+                   (static_cast<uint32_t>(
+                        static_cast<unsigned char>(buffer[4 * i + 2])) << 8) |
+                   (static_cast<uint32_t>(
+                        static_cast<unsigned char>(buffer[4 * i + 1])) << 16) |
+                   (static_cast<uint32_t>(
+                        static_cast<unsigned char>(buffer[4 * i + 0])) << 24);
     }
 }
 
-inline SHA1::SHA1() : transforms(0) {
+inline SHA1::SHA1() : transforms(0), finalized(false) {
     digest[0] = 0x67452301;
     digest[1] = 0xefcdab89;
     digest[2] = 0x98badcfe;
@@ -180,6 +188,7 @@ inline SHA1::SHA1() : transforms(0) {
 }
 
 inline void SHA1::update(const char* data, size_t len) {
+    if (finalized) return;
     while (len > 0) {
         size_t needed = BLOCK_BYTES - buffer.size();
         size_t to_copy = (len < needed) ? len : needed;
@@ -200,6 +209,7 @@ inline void SHA1::update(const std::string& s) {
 }
 
 inline void SHA1::update(std::istream& is) {
+    if (finalized) return;
     while (true) {
         char sbuf[BLOCK_BYTES];
         is.read(sbuf, BLOCK_BYTES - buffer.size());
@@ -214,7 +224,28 @@ inline void SHA1::update(std::istream& is) {
     }
 }
 
-inline std::string SHA1::final() {
+inline std::string SHA1::from_file(const std::string& filename) {
+    std::ifstream file;
+    try {
+        file.open(std::filesystem::u8path(filename), std::ios::binary);
+    } catch (const std::filesystem::filesystem_error&) {
+        return "";
+    }
+    if (!file.is_open()) return "";
+
+    SHA1 checksum;
+    checksum.update(file);
+    if (file.bad() || (file.fail() && !file.eof())) return "";
+    return checksum.final();
+}
+
+inline void SHA1::final(unsigned char digestOut[20]) {
+    if (finalized) {
+        for (size_t i = 0; i < sizeof(finalizedDigest); ++i)
+            digestOut[i] = finalizedDigest[i];
+        return;
+    }
+
     uint64_t total_bits = (transforms * BLOCK_BYTES + buffer.size()) * 8;
     buffer += (char)0x80;
     size_t orig_size = buffer.size();
@@ -232,13 +263,36 @@ inline std::string SHA1::final() {
     block[BLOCK_INTS - 1] = (uint32_t)total_bits;
     block[BLOCK_INTS - 2] = (uint32_t)(total_bits >> 32);
     transform(digest, block, transforms);
+
+    for (int i = 0; i < 5; i++) {
+        digestOut[i * 4] = static_cast<unsigned char>(digest[i] >> 24);
+        digestOut[i * 4 + 1] = static_cast<unsigned char>(digest[i] >> 16);
+        digestOut[i * 4 + 2] = static_cast<unsigned char>(digest[i] >> 8);
+        digestOut[i * 4 + 3] = static_cast<unsigned char>(digest[i]);
+    }
+    for (size_t i = 0; i < sizeof(finalizedDigest); ++i)
+        finalizedDigest[i] = digestOut[i];
+    finalized = true;
+}
+
+inline std::string SHA1::final() {
+    unsigned char digestBytes[20];
+    final(digestBytes);
     static const char hexChars[] = "0123456789abcdef";
     char result[41];
     for (int i = 0; i < 5; i++) {
-        uint32_t val = digest[i];
-        for (int b = 7; b >= 0; b--) {
-            result[i * 8 + (7 - b)] = hexChars[(val >> (b * 4)) & 0x0F];
-        }
+        const unsigned char byte0 = digestBytes[i * 4];
+        const unsigned char byte1 = digestBytes[i * 4 + 1];
+        const unsigned char byte2 = digestBytes[i * 4 + 2];
+        const unsigned char byte3 = digestBytes[i * 4 + 3];
+        result[i * 8] = hexChars[byte0 >> 4];
+        result[i * 8 + 1] = hexChars[byte0 & 0x0F];
+        result[i * 8 + 2] = hexChars[byte1 >> 4];
+        result[i * 8 + 3] = hexChars[byte1 & 0x0F];
+        result[i * 8 + 4] = hexChars[byte2 >> 4];
+        result[i * 8 + 5] = hexChars[byte2 & 0x0F];
+        result[i * 8 + 6] = hexChars[byte3 >> 4];
+        result[i * 8 + 7] = hexChars[byte3 & 0x0F];
     }
     result[40] = '\0';
     return std::string(result, 40);
@@ -247,6 +301,13 @@ inline std::string SHA1::final() {
 inline std::string sha1(const std::string& str) {
     SHA1 checksum;
     checksum.update(str);
+    return checksum.final();
+}
+
+inline std::string sha1(const std::string& input, const std::string& suffix) {
+    SHA1 checksum;
+    checksum.update(input);
+    checksum.update(suffix);
     return checksum.final();
 }
 

@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Arquivos de Origem">
+      <UniqueIdentifier>{4FC737F1-C7A5-4376-A066-2A32D752A2FF}</UniqueIdentifier>
+      <Extensions>cpp;c;cc;cxx;c++;cppm;ixx;def;odl;idl;hpj;bat;asm;asmx</Extensions>
+    </Filter>
+    <Filter Include="Arquivos de Cabeçalho">
+      <UniqueIdentifier>{93995380-89BD-4b04-88EB-625FBE52EBFB}</UniqueIdentifier>
+      <Extensions>h;hh;hpp;hxx;h++;hm;inl;inc;ipp;xsd</Extensions>
+    </Filter>
+    <Filter Include="Arquivos de Recurso">
+      <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
+      <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx;tiff;tif;png;wav;mfcribbon-ms</Extensions>
+    </Filter>
+    <Filter Include="Algoritmos">
+      <UniqueIdentifier>{70B07C86-69D8-4E63-B341-FA8CB48DB632}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Listas">
+      <UniqueIdentifier>{BC47BC6B-F351-4C88-A573-6A797B600C33}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Dependências">
+      <UniqueIdentifier>{1E691469-2845-4806-9875-90364D99688A}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Licenças">
+      <UniqueIdentifier>{EA4D276B-C963-40F4-82B4-F9E4E269B85D}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="..\..\src\cerberus.cpp">
+      <Filter>Arquivos de Origem</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\src\algorithms\opencl_kernels.cpp">
+      <Filter>Algoritmos</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\dependencies\crypt_blowfish\crypt_blowfish.c">
+      <Filter>Dependências</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="..\..\src\algorithms\gpu_kernels.cu">
+      <Filter>Algoritmos</Filter>
+    </CustomBuild>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="..\..\src\algorithms\base64.h">
+      <Filter>Algoritmos</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\src\algorithms\crc32.h">
+      <Filter>Algoritmos</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\src\algorithms\hmac.h">
+      <Filter>Algoritmos</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\src\algorithms\md4.h">
+      <Filter>Algoritmos</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\src\algorithms\md5.h">
+      <Filter>Algoritmos</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\src\algorithms\picosha2.h">
+      <Filter>Algoritmos</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\src\algorithms\sha1.h">
+      <Filter>Algoritmos</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\src\algorithms\sha224.h">
+      <Filter>Algoritmos</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\src\algorithms\sha512.h">
+      <Filter>Algoritmos</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\..\data\lists\saltlist.txt">
+      <Filter>Listas</Filter>
+    </None>
+    <None Include="..\..\data\lists\wordlist.txt">
+      <Filter>Listas</Filter>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\..\licenses\LICENSE-APACHE-2.0.txt">
+      <Filter>Licenças</Filter>
+    </None>
+    <None Include="..\..\licenses\LICENSE-MIT-picosha2.txt">
+      <Filter>Licenças</Filter>
+    </None>
+    <None Include="..\..\licenses\LICENSE-crypt_blowfish.txt">
+      <Filter>Licenças</Filter>
+    </None>
+    <None Include="..\..\licenses\THIRD_PARTY_NOTICES.md">
+      <Filter>Licenças</Filter>
+    </None>
+  </ItemGroup>
+</Project>
