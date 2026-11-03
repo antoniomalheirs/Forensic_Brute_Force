@@ -95,7 +95,25 @@ setup.bat                    Environment setup entry point
 
 ## Validation and license
 
-`cerberus.exe test` runs the built-in integration smoke cases. These cases are not independent cryptographic validation. For machine-specific performance measurements, run `cerberus.exe benchmark`.
+`cerberus.exe test` runs the built-in integration smoke cases. For independent
+correctness and negative-case coverage, run the Python suite after building:
+
+~~~powershell
+py -3 -m unittest discover -s tests -p "test_*.py" -v
+~~~
+
+The suite compares supported algorithms with independent references, checks
+exact recovery results and rejects representative false-positive cases. The
+release workflow runs it before uploading artifacts. See [tests/README.md](tests/README.md)
+for coverage and limits. No finite test suite can prove behavior for every
+possible input. The native harness also compiles the internal C++ helpers; set
+`CERBERUS_TEST_CUDA=1` to compile and exercise CUDA kernel boundary cases on a
+compatible device. CI also builds across CUDA 12.8/12.9, compiles all
+architectures each toolkit supports, and runs direct OpenCL kernel checks on
+PoCL. The coverage workflow injects backend failures and publishes line/branch
+coverage for host C++ and OpenCL code. CUDA device code is checked through
+fault-injection and result tests but is not part of GCC's coverage percentages.
+For machine-specific performance measurements, run `cerberus.exe benchmark`.
 
 CERBERUS is distributed under the MIT License; see [LICENSE](LICENSE). Third-party terms are documented under `licenses/`.
 
@@ -192,7 +210,27 @@ setup.bat                    Entrada para configurar o ambiente
 
 ### Verificação e licença
 
-`cerberus.exe test` executa casos internos de integração; eles não substituem uma validação criptográfica independente. Para medir o desempenho no computador alvo, execute `cerberus.exe benchmark`.
+`cerberus.exe test` executa os casos internos de integração. Para validação
+independente e testes negativos, compile o programa e execute:
+
+~~~powershell
+py -3 -m unittest discover -s tests -p "test_*.py" -v
+~~~
+
+A suíte compara os algoritmos implementados com referências independentes,
+confere a senha exata recuperada e rejeita casos representativos de falso
+positivo. O workflow de release executa os testes antes de enviar os artefatos.
+Consulte [tests/README.md](tests/README.md) para cobertura e limites. Nenhuma
+suíte finita prova o comportamento de todas as entradas possíveis. O harness
+nativo também compila as rotinas C++; defina `CERBERUS_TEST_CUDA=1` para compilar
+e testar os limites dos kernels CUDA em uma GPU compatível. O CI também compila
+com CUDA 12.8/12.9, testa todas as arquiteturas suportadas por cada toolkit e
+executa os kernels OpenCL com PoCL. O workflow de cobertura injeta falhas nos
+  motores e publica cobertura de linhas/ramificações do código C++ host e da
+  orquestração OpenCL. O código OpenCL C compilado pelo runtime e o código de
+  dispositivo CUDA são exercitados por testes, mas não entram nos percentuais do
+  GCC. Para medir o desempenho no computador alvo, execute
+`cerberus.exe benchmark`.
 
 O CERBERUS é distribuído sob a licença MIT; consulte [LICENSE](LICENSE). Os termos de terceiros estão documentados em `licenses/`.
 

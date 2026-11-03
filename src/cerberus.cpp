@@ -25,6 +25,9 @@
 #include <utility>
 #include <vector>
 #include <unordered_set>
+#if defined(__linux__)
+#include <unistd.h>
+#endif
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -342,6 +345,19 @@ std::filesystem::path executableDirectory() {
     if (length == 0) return {};
     if (length < buffer.size()) {
       return std::filesystem::path(std::wstring(buffer.data(), length))
+          .parent_path();
+    }
+    buffer.resize(buffer.size() * 2);
+  }
+#elif defined(__linux__)
+  std::vector<char> buffer(512);
+  while (buffer.size() <= 32768) {
+    const ssize_t length =
+        readlink("/proc/self/exe", buffer.data(), buffer.size());
+    if (length < 0) return {};
+    if (static_cast<size_t>(length) < buffer.size()) {
+      return std::filesystem::path(std::string(buffer.data(),
+                                               static_cast<size_t>(length)))
           .parent_path();
     }
     buffer.resize(buffer.size() * 2);
@@ -5766,6 +5782,7 @@ int cerberusMain(int argc, char *argv[]) {
   return 0;
 }
 
+#if !defined(CERBERUS_NO_ENTRYPOINT)
 #ifdef _WIN32
 int wmain(int argc, wchar_t *wideArgv[]) {
   std::vector<std::string> utf8Args;
@@ -5799,4 +5816,5 @@ int wmain(int argc, wchar_t *wideArgv[]) {
 }
 #else
 int main(int argc, char *argv[]) { return cerberusMain(argc, argv); }
+#endif
 #endif

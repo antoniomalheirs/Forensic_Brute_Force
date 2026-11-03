@@ -43,6 +43,7 @@ ipch/
 
 # Root-level executable and CUDA runtime copied by the local build
 /cerberus.exe
+/cerberus_cpp_unit_tests.exe
 /cudart64_*.dll
 
 # CUDA compiler outputs
@@ -70,3 +71,5 @@ desktop.ini
 *.swp
 *.swo
 *.tmp
+__pycache__/
+*.py[cod]

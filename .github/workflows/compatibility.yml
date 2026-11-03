@@ -1,0 +1,78 @@
+name: Build compatibility
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cuda-toolkit:
+    name: CUDA ${{ matrix.cuda }} / Windows
+    runs-on: windows-2022
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        cuda: [ '12.8.1', '12.9.1' ]
+
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+
+    - name: Locate Visual Studio
+      shell: pwsh
+      run: |
+        $vswhere = Join-Path ([Environment]::GetFolderPath('ProgramFilesX86')) 'Microsoft Visual Studio\Installer\vswhere.exe'
+        if (-not (Test-Path -LiteralPath $vswhere)) { throw "vswhere.exe was not found at $vswhere" }
+        $vsPath = & $vswhere -latest -products '*' -requires 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64' -property installationPath | Select-Object -First 1
+        if ([string]::IsNullOrWhiteSpace($vsPath)) { throw 'Visual Studio C++ x64 build tools were not found.' }
+        "VS_PATH=$($vsPath.Trim())" >> $env:GITHUB_ENV
+
+    - name: Setup CUDA Toolkit
+      uses: Jimver/cuda-toolkit@3d45d157f327c09c04b50ee6ccdea2d9d017ec76 # v0.2.35
+      with:
+        cuda: ${{ matrix.cuda }}
+        method: network
+        use-github-cache: false
+        use-local-cache: false
+
+    - name: Build with selected toolkit
+      shell: cmd
+      run: |
+        call build\windows\build.bat --require-cuda
+        if errorlevel 1 exit /b 1
+
+    - name: Compile every architecture supported by the toolkit
+      shell: cmd
+      run: call build\windows\tools\test_arch.bat
+
+    - name: Run correctness suite
+      shell: cmd
+      env:
+        CERBERUS_TEST_CUDA: '1'
+        CERBERUS_SKIP_SETUP_BUILD_TESTS: '1'
+      run: py -3 -m unittest discover -s tests -p "test_*.py" -v
+
+  opencl-pocl:
+    name: OpenCL CPU implementation / Ubuntu
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+
+    - name: Install compiler and PoCL OpenCL runtime
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc g++ pocl-opencl-icd ocl-icd-libopencl1
+
+    - name: Run native CPU and OpenCL kernel checks
+      env:
+        CERBERUS_REQUIRE_OPENCL: '1'
+      run: timeout 18m bash tests/run_cpp_tests.sh

@@ -8,6 +8,7 @@
 #include <string>
 #include <string.h>
 #include <vector>
+#include "test_faults.h"
 
 // Macro to silence VS IntelliSense errors on triple-bracket syntax
 #ifdef __INTELLISENSE__
@@ -18,6 +19,59 @@
 
 using CudaProgressCallback = void (*)(void *, unsigned long long,
                                       unsigned long long, double, int, int);
+
+#if defined(CERBERUS_TESTING)
+static int g_cuda_test_fault = CERBERUS_CUDA_FAIL_NONE;
+static int g_cuda_test_fault_skip = 0;
+
+extern "C" void cerberusCudaTestFailAfter(int fault, int successfulCalls) {
+  g_cuda_test_fault = fault;
+  g_cuda_test_fault_skip = std::max(0, successfulCalls);
+}
+
+extern "C" void cerberusCudaTestResetFault() {
+  g_cuda_test_fault = CERBERUS_CUDA_FAIL_NONE;
+  g_cuda_test_fault_skip = 0;
+}
+
+static bool cudaShouldFail(int fault) {
+  if (g_cuda_test_fault != fault) return false;
+  if (g_cuda_test_fault_skip > 0) {
+    --g_cuda_test_fault_skip;
+    return false;
+  }
+  return true;
+}
+#else
+static bool cudaShouldFail(int) { return false; }
+#endif
+
+static cudaError_t cerberusCudaMalloc(void **pointer, size_t size) {
+  if (cudaShouldFail(CERBERUS_CUDA_FAIL_ALLOCATION)) {
+    if (pointer) *pointer = nullptr;
+    return cudaErrorMemoryAllocation;
+  }
+  return cudaMalloc(pointer, size);
+}
+
+static cudaError_t cerberusCudaMemcpy(void *destination, const void *source,
+                                      size_t size, cudaMemcpyKind kind) {
+  const int fault = kind == cudaMemcpyHostToDevice
+                        ? CERBERUS_CUDA_FAIL_HOST_TO_DEVICE_COPY
+                        : (kind == cudaMemcpyDeviceToHost
+                               ? CERBERUS_CUDA_FAIL_DEVICE_TO_HOST_COPY
+                               : CERBERUS_CUDA_FAIL_NONE);
+  if (fault != CERBERUS_CUDA_FAIL_NONE && cudaShouldFail(fault))
+    return cudaErrorInvalidValue;
+  return cudaMemcpy(destination, source, size, kind);
+}
+
+static cudaError_t cerberusCudaMemset(void *destination, int value,
+                                      size_t size) {
+  if (cudaShouldFail(CERBERUS_CUDA_FAIL_MEMSET))
+    return cudaErrorInvalidValue;
+  return cudaMemset(destination, value, size);
+}
 
 // --- Device Constants & Macros ---
 #define ROTL32(x, n) (((x) << (n)) | ((x) >> (32 - (n))))
@@ -587,15 +641,15 @@ gpu_brute_force_kernel(const char *charset, int charsetLen, int length,
 // Host Wrappers
 // ============================================================
 
-extern "C" int launch_gpu_brute_force_ext(const char *charset, const char *target,
-                                          int max_len, char *result, int hashType,
-                                          const char *salt,
-                                          unsigned long long *attempts_out,
-                                          void *progress_context,
-                                          CudaProgressCallback progress_callback) {
-  if (!charset || !target || !result || max_len < 1) return 0;
-  result[0] = '\0';
+static int launch_gpu_brute_force_impl(
+    const char *charset, const char *target, int max_len, char *result,
+    int hashType, const char *salt, unsigned long long *attempts_out,
+    void *progress_context, CudaProgressCallback progress_callback,
+    unsigned long long indexLimit) {
   if (attempts_out) *attempts_out = 0;
+  if (!result) return 0;
+  result[0] = '\0';
+  if (!charset || !target || max_len < 1) return 0;
   int charsetLen = (int)strlen(charset);
   if (charsetLen < 1) return 0;
   const int supportedType = hashType == 0 || hashType == 1 || hashType == 2 ||
@@ -611,6 +665,7 @@ extern "C" int launch_gpu_brute_force_ext(const char *charset, const char *targe
       std::any_of(charset, charset + charsetLen,
                   [](unsigned char c) { return c > 0x7F; }))
     return 0;
+  if (cudaShouldFail(CERBERUS_CUDA_FAIL_DRIVER_INITIALIZATION)) return 0;
   char *d_charset = nullptr, *d_prefix = nullptr, *d_target = nullptr;
   char *d_result = nullptr, *d_salt = nullptr;
   int *d_found = nullptr;
@@ -627,12 +682,18 @@ extern "C" int launch_gpu_brute_force_ext(const char *charset, const char *targe
     return 0;
   };
 
-  if (cudaMalloc(&d_charset, charsetLen + 1) != cudaSuccess ||
-      cudaMalloc(&d_prefix, static_cast<size_t>(max_len) + 1) != cudaSuccess ||
-      cudaMalloc(&d_target, 129) != cudaSuccess ||
-      cudaMalloc(&d_found, sizeof(int)) != cudaSuccess ||
-      cudaMalloc(&d_result, 256) != cudaSuccess ||
-      cudaMalloc(&d_salt, saltLen + 1) != cudaSuccess)
+  if (cerberusCudaMalloc(reinterpret_cast<void **>(&d_charset),
+                         charsetLen + 1) != cudaSuccess ||
+      cerberusCudaMalloc(reinterpret_cast<void **>(&d_prefix),
+                         static_cast<size_t>(max_len) + 1) != cudaSuccess ||
+      cerberusCudaMalloc(reinterpret_cast<void **>(&d_target), 129) !=
+          cudaSuccess ||
+      cerberusCudaMalloc(reinterpret_cast<void **>(&d_found), sizeof(int)) !=
+          cudaSuccess ||
+      cerberusCudaMalloc(reinterpret_cast<void **>(&d_result), 256) !=
+          cudaSuccess ||
+      cerberusCudaMalloc(reinterpret_cast<void **>(&d_salt), saltLen + 1) !=
+          cudaSuccess)
     return fail();
 
   // Normalize supported hexadecimal target hashes.
@@ -647,18 +708,20 @@ extern "C" int launch_gpu_brute_force_ext(const char *charset, const char *targe
     }
   }
 
-  if (cudaMemcpy(d_charset, charset, charsetLen + 1, cudaMemcpyHostToDevice) != cudaSuccess ||
-      cudaMemcpy(d_target, lowerTarget, strlen(lowerTarget) + 1, cudaMemcpyHostToDevice) != cudaSuccess ||
-      cudaMemset(d_found, 0, sizeof(int)) != cudaSuccess ||
-      cudaMemcpy(d_salt, salt ? salt : "", saltLen + 1, cudaMemcpyHostToDevice) != cudaSuccess)
+  if (cerberusCudaMemcpy(d_charset, charset, charsetLen + 1,
+                         cudaMemcpyHostToDevice) != cudaSuccess ||
+      cerberusCudaMemcpy(d_target, lowerTarget, strlen(lowerTarget) + 1,
+                         cudaMemcpyHostToDevice) != cudaSuccess ||
+      cerberusCudaMemset(d_found, 0, sizeof(int)) != cudaSuccess ||
+      cerberusCudaMemcpy(d_salt, salt ? salt : "", saltLen + 1,
+                         cudaMemcpyHostToDevice) != cudaSuccess)
     return fail();
 
   // A single CUDA launch indexes at most 64 bits. For longer passwords, keep
   // a fixed prefix on the host and enumerate only a representable suffix on
   // the GPU. The prefix odometer itself has no global numeric index.
   const unsigned long long radix = static_cast<unsigned long long>(charsetLen);
-  const unsigned long long maxIndex =
-      std::numeric_limits<unsigned long long>::max();
+  const unsigned long long maxIndex = indexLimit;
   unsigned long long suffixCapacity = 1;
   int maxSuffixLength = 0;
   while (maxSuffixLength < max_len && suffixCapacity <= maxIndex / radix) {
@@ -690,8 +753,8 @@ extern "C" int launch_gpu_brute_force_ext(const char *charset, const char *targe
       for (int i = 0; i < prefixLen; ++i)
         prefix[static_cast<size_t>(i)] = charset[prefixDigits[static_cast<size_t>(i)]];
       prefix[static_cast<size_t>(prefixLen)] = '\0';
-      if (cudaMemcpy(d_prefix, prefix.c_str(), prefix.size(),
-                     cudaMemcpyHostToDevice) != cudaSuccess) {
+      if (cerberusCudaMemcpy(d_prefix, prefix.c_str(), prefix.size(),
+                             cudaMemcpyHostToDevice) != cudaSuccess) {
         executionSucceeded = 0;
         goto cleanup;
       }
@@ -718,12 +781,21 @@ extern "C" int launch_gpu_brute_force_ext(const char *charset, const char *targe
 
         dim3 grid(numBlocks);
         dim3 block(blockSize);
+        if (cudaShouldFail(CERBERUS_CUDA_FAIL_KERNEL_LAUNCH)) {
+          executionSucceeded = 0;
+          goto cleanup;
+        }
         KERNEL_LAUNCH(gpu_brute_force_kernel, grid, block, d_charset, charsetLen,
                       len, prefixLen, d_prefix, offset, totalCombinations,
                       d_target, hashType, d_salt, saltLen, d_found, d_result);
-        const cudaError_t launchError = cudaGetLastError();
+        const cudaError_t launchError =
+            cudaShouldFail(CERBERUS_CUDA_FAIL_LAUNCH_STATUS)
+                ? cudaErrorLaunchFailure
+                : cudaGetLastError();
         if (launchError != cudaSuccess ||
-            cudaDeviceSynchronize() != cudaSuccess) {
+            (cudaShouldFail(CERBERUS_CUDA_FAIL_SYNCHRONIZE)
+                 ? cudaErrorLaunchFailure
+                 : cudaDeviceSynchronize()) != cudaSuccess) {
           executionSucceeded = 0;
           goto cleanup;
         }
@@ -754,14 +826,14 @@ extern "C" int launch_gpu_brute_force_ext(const char *charset, const char *targe
         }
 
         int h_found = 0;
-        if (cudaMemcpy(&h_found, d_found, sizeof(int),
-                       cudaMemcpyDeviceToHost) != cudaSuccess) {
+        if (cerberusCudaMemcpy(&h_found, d_found, sizeof(int),
+                               cudaMemcpyDeviceToHost) != cudaSuccess) {
           executionSucceeded = 0;
           goto cleanup;
         }
         if (h_found) {
-          if (cudaMemcpy(result, d_result, len + 1,
-                         cudaMemcpyDeviceToHost) != cudaSuccess) {
+          if (cerberusCudaMemcpy(result, d_result, len + 1,
+                                 cudaMemcpyDeviceToHost) != cudaSuccess) {
             executionSucceeded = 0;
           } else {
             result[len] = '\0';
@@ -787,6 +859,27 @@ cleanup:
   releaseBuffers();
   return executionSucceeded;
 }
+
+extern "C" int launch_gpu_brute_force_ext(
+    const char *charset, const char *target, int max_len, char *result,
+    int hashType, const char *salt, unsigned long long *attempts_out,
+    void *progress_context, CudaProgressCallback progress_callback) {
+  return launch_gpu_brute_force_impl(
+      charset, target, max_len, result, hashType, salt, attempts_out,
+      progress_context, progress_callback,
+      std::numeric_limits<unsigned long long>::max());
+}
+
+#if defined(CERBERUS_TESTING)
+extern "C" int launch_gpu_brute_force_ext_test_limit(
+    const char *charset, const char *target, int max_len, char *result,
+    int hashType, const char *salt, unsigned long long *attempts_out,
+    unsigned long long indexLimit) {
+  return launch_gpu_brute_force_impl(charset, target, max_len, result, hashType,
+                                     salt, attempts_out, nullptr, nullptr,
+                                     indexLimit);
+}
+#endif
 
 extern "C" void launch_gpu_brute_force(const char *charset, const char *target,
                                        int max_len, char *result) {

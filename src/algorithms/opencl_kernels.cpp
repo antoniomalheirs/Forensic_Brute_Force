@@ -1,6 +1,7 @@
 #define CL_TARGET_OPENCL_VERSION 120
 #define CL_USE_DEPRECATED_OPENCL_1_2_APIS // For wider compatibility
 #include <CL/cl.h>
+#include "test_faults.h"
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -513,6 +514,33 @@ struct OpenCLApi {
 
 static OpenCLApi g_opencl_api;
 
+#if defined(CERBERUS_TESTING)
+static int g_opencl_test_fault = CERBERUS_OPENCL_FAIL_NONE;
+static int g_opencl_test_fault_skip = 0;
+
+extern "C" void cerberusOpenCLTestFailAfter(int fault,
+                                             int successfulCalls) {
+  g_opencl_test_fault = fault;
+  g_opencl_test_fault_skip = std::max(0, successfulCalls);
+}
+
+extern "C" void cerberusOpenCLTestResetFault() {
+  g_opencl_test_fault = CERBERUS_OPENCL_FAIL_NONE;
+  g_opencl_test_fault_skip = 0;
+}
+
+static bool openclShouldFail(int fault) {
+  if (g_opencl_test_fault != fault) return false;
+  if (g_opencl_test_fault_skip > 0) {
+    --g_opencl_test_fault_skip;
+    return false;
+  }
+  return true;
+}
+#else
+static bool openclShouldFail(int) { return false; }
+#endif
+
 static void unloadOpenCLApi() {
   if (g_opencl_api.library) {
 #ifdef _WIN32
@@ -535,6 +563,7 @@ static void *resolveOpenCLSymbol(OpenCLLibraryHandle library,
 
 static bool loadOpenCLApi() {
   if (g_opencl_api.library) return true;
+  if (openclShouldFail(CERBERUS_OPENCL_FAIL_LIBRARY_LOAD)) return false;
 #ifdef _WIN32
   OpenCLLibraryHandle library = LoadLibraryExW(
       L"OpenCL.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
@@ -603,6 +632,54 @@ static bool loadOpenCLApi() {
 #define clFinish g_opencl_api.finish
 #define clEnqueueReadBuffer g_opencl_api.enqueueReadBuffer
 
+static cl_mem createOpenCLBuffer(cl_context owner, cl_mem_flags flags,
+                                 size_t size, void *hostPointer,
+                                 cl_int *error) {
+  if (openclShouldFail(CERBERUS_OPENCL_FAIL_BUFFER_CREATE)) {
+    if (error) *error = CL_MEM_OBJECT_ALLOCATION_FAILURE;
+    return nullptr;
+  }
+  return clCreateBuffer(owner, flags, size, hostPointer, error);
+}
+
+static cl_int writeOpenCLBuffer(cl_command_queue queue, cl_mem buffer,
+                                cl_bool blocking, size_t offset, size_t size,
+                                const void *hostPointer) {
+  if (openclShouldFail(CERBERUS_OPENCL_FAIL_BUFFER_WRITE))
+    return CL_OUT_OF_RESOURCES;
+  return clEnqueueWriteBuffer(queue, buffer, blocking, offset, size,
+                              hostPointer, 0, NULL, NULL);
+}
+
+static cl_int setOpenCLKernelArg(cl_kernel targetKernel, cl_uint index,
+                                 size_t size, const void *value) {
+  if (openclShouldFail(CERBERUS_OPENCL_FAIL_KERNEL_ARGUMENT))
+    return CL_INVALID_ARG_INDEX;
+  return clSetKernelArg(targetKernel, index, size, value);
+}
+
+static cl_int submitOpenCLKernel(cl_command_queue queue, cl_kernel targetKernel,
+                                 cl_uint dimensions, const size_t *globalSize,
+                                 const size_t *localSize) {
+  if (openclShouldFail(CERBERUS_OPENCL_FAIL_KERNEL_SUBMIT))
+    return CL_OUT_OF_RESOURCES;
+  return clEnqueueNDRangeKernel(queue, targetKernel, dimensions, NULL,
+                                globalSize, localSize, 0, NULL, NULL);
+}
+
+static cl_int readOpenCLBuffer(cl_command_queue queue, cl_mem buffer,
+                               size_t size, void *hostPointer, int fault) {
+  if (openclShouldFail(fault)) return CL_OUT_OF_RESOURCES;
+  return clEnqueueReadBuffer(queue, buffer, CL_TRUE, 0, size, hostPointer, 0,
+                             NULL, NULL);
+}
+
+static cl_int finishOpenCLQueue(cl_command_queue queue) {
+  if (openclShouldFail(CERBERUS_OPENCL_FAIL_FINISH))
+    return CL_OUT_OF_RESOURCES;
+  return clFinish(queue);
+}
+
 void checkErr(cl_int err, const char *name) {
   if (err != CL_SUCCESS) {
     std::cerr << "[OpenCL] ERROR: " << name << " (" << err << ")" << std::endl;
@@ -645,6 +722,10 @@ extern "C" int initOpenCL() {
   cl_uint num_platforms = 0;
   releaseOpenCLObjects();
   if (!loadOpenCLApi()) return 0;
+  if (openclShouldFail(CERBERUS_OPENCL_FAIL_PLATFORM_ENUMERATION)) {
+    unloadOpenCLApi();
+    return 0;
+  }
   err = clGetPlatformIDs(0, NULL, &num_platforms);
   if (err != CL_SUCCESS || num_platforms == 0) {
     unloadOpenCLApi();
@@ -659,83 +740,117 @@ extern "C" int initOpenCL() {
 
   const char *sources[] = {kernelSource1, kernelSource2, kernelSource3};
   for (cl_platform_id candidatePlatform : platforms) {
-    cl_uint num_devices = 0;
-    err = clGetDeviceIDs(candidatePlatform, CL_DEVICE_TYPE_GPU, 0, NULL,
-                         &num_devices);
-    if (err != CL_SUCCESS || num_devices == 0) continue;
+    const cl_device_type candidateTypes[] = {
+        CL_DEVICE_TYPE_GPU,
+#if defined(CERBERUS_TESTING)
+        // CI uses PoCL's CPU ICD to exercise the OpenCL kernels on systems
+        // without a GPU. Production builds remain GPU-only.
+        CL_DEVICE_TYPE_CPU,
+#endif
+    };
+    for (cl_device_type candidateType : candidateTypes) {
+      cl_uint num_devices = 0;
+      err = openclShouldFail(CERBERUS_OPENCL_FAIL_DEVICE_ENUMERATION)
+                ? CL_OUT_OF_RESOURCES
+                : clGetDeviceIDs(candidatePlatform, candidateType, 0, NULL,
+                                 &num_devices);
+      if (err != CL_SUCCESS || num_devices == 0) continue;
 
-    std::vector<cl_device_id> devices(num_devices);
-    err = clGetDeviceIDs(candidatePlatform, CL_DEVICE_TYPE_GPU, num_devices,
-                         devices.data(), NULL);
-    if (err != CL_SUCCESS) continue;
+      std::vector<cl_device_id> devices(num_devices);
+      err = clGetDeviceIDs(candidatePlatform, candidateType, num_devices,
+                           devices.data(), NULL);
+      if (err != CL_SUCCESS) continue;
 
-    for (cl_device_id candidateDevice : devices) {
-      platform_id = candidatePlatform;
-      device_id = candidateDevice;
+      for (cl_device_id candidateDevice : devices) {
+        platform_id = candidatePlatform;
+        device_id = candidateDevice;
 
-      size_t device_name_size = 0;
-      err = clGetDeviceInfo(device_id, CL_DEVICE_NAME, 0, NULL,
-                            &device_name_size);
-      if (err != CL_SUCCESS || device_name_size == 0) {
-        releaseOpenCLObjects();
-        continue;
-      }
-      std::vector<char> device_name(device_name_size, '\0');
-      err = clGetDeviceInfo(device_id, CL_DEVICE_NAME, device_name.size(),
-                            device_name.data(), NULL);
-      if (err != CL_SUCCESS) {
-        releaseOpenCLObjects();
-        continue;
-      }
-
-      context = clCreateContext(NULL, 1, &device_id, NULL, NULL, &err);
-      if (err != CL_SUCCESS || !context) {
-        releaseOpenCLObjects();
-        continue;
-      }
-
-      command_queue = clCreateCommandQueue(context, device_id, 0, &err);
-      if (err != CL_SUCCESS || !command_queue) {
-        releaseOpenCLObjects();
-        continue;
-      }
-
-      program = clCreateProgramWithSource(context, 3, sources, NULL, &err);
-      if (err != CL_SUCCESS || !program) {
-        releaseOpenCLObjects();
-        continue;
-      }
-
-      err = clBuildProgram(program, 1, &device_id, NULL, NULL, NULL);
-      if (err != CL_SUCCESS) {
-        size_t log_size = 0;
-        if (clGetProgramBuildInfo(program, device_id, CL_PROGRAM_BUILD_LOG,
-                                  0, NULL, &log_size) == CL_SUCCESS &&
-            log_size > 0) {
-          std::vector<char> build_log(log_size + 1, '\0');
-          if (clGetProgramBuildInfo(program, device_id, CL_PROGRAM_BUILD_LOG,
-                                    log_size, build_log.data(), NULL) ==
-                  CL_SUCCESS &&
-              !g_opencl_quiet) {
-            std::cerr << "[OpenCL Build Error on selected GPU]\n"
-                      << terminalSafeOpenCLText(build_log.data())
-                      << std::endl;
-          }
+        size_t device_name_size = 0;
+        err = clGetDeviceInfo(device_id, CL_DEVICE_NAME, 0, NULL,
+                              &device_name_size);
+        if (err != CL_SUCCESS || device_name_size == 0) {
+          releaseOpenCLObjects();
+          continue;
         }
-        releaseOpenCLObjects();
-        continue;
-      }
+        std::vector<char> device_name(device_name_size, '\0');
+        err = clGetDeviceInfo(device_id, CL_DEVICE_NAME, device_name.size(),
+                              device_name.data(), NULL);
+        if (err != CL_SUCCESS) {
+          releaseOpenCLObjects();
+          continue;
+        }
 
-      kernel = clCreateKernel(program, "brute_force_universal", &err);
-      if (err != CL_SUCCESS || !kernel) {
-        releaseOpenCLObjects();
-        continue;
-      }
+        if (openclShouldFail(CERBERUS_OPENCL_FAIL_CONTEXT_CREATE)) {
+          err = CL_OUT_OF_HOST_MEMORY;
+          context = NULL;
+        } else {
+          context = clCreateContext(NULL, 1, &device_id, NULL, NULL, &err);
+        }
+        if (err != CL_SUCCESS || !context) {
+          releaseOpenCLObjects();
+          continue;
+        }
 
-      if (!g_opencl_quiet) {
-        std::cout << "\x1b[1;32m[OpenCL] GPU detectada e pronta.\x1b[0m\n";
+        if (openclShouldFail(CERBERUS_OPENCL_FAIL_QUEUE_CREATE)) {
+          err = CL_OUT_OF_RESOURCES;
+          command_queue = NULL;
+        } else {
+          command_queue = clCreateCommandQueue(context, device_id, 0, &err);
+        }
+        if (err != CL_SUCCESS || !command_queue) {
+          releaseOpenCLObjects();
+          continue;
+        }
+
+        if (openclShouldFail(CERBERUS_OPENCL_FAIL_PROGRAM_CREATE)) {
+          err = CL_OUT_OF_HOST_MEMORY;
+          program = NULL;
+        } else {
+          program = clCreateProgramWithSource(context, 3, sources, NULL, &err);
+        }
+        if (err != CL_SUCCESS || !program) {
+          releaseOpenCLObjects();
+          continue;
+        }
+
+        err = openclShouldFail(CERBERUS_OPENCL_FAIL_PROGRAM_BUILD)
+                  ? CL_BUILD_PROGRAM_FAILURE
+                  : clBuildProgram(program, 1, &device_id, NULL, NULL, NULL);
+        if (err != CL_SUCCESS) {
+          size_t log_size = 0;
+          if (clGetProgramBuildInfo(program, device_id, CL_PROGRAM_BUILD_LOG,
+                                    0, NULL, &log_size) == CL_SUCCESS &&
+              log_size > 0) {
+            std::vector<char> build_log(log_size + 1, '\0');
+            if (clGetProgramBuildInfo(program, device_id, CL_PROGRAM_BUILD_LOG,
+                                      log_size, build_log.data(), NULL) ==
+                    CL_SUCCESS &&
+                !g_opencl_quiet) {
+              std::cerr << "[OpenCL Build Error on selected GPU]\n"
+                        << terminalSafeOpenCLText(build_log.data())
+                        << std::endl;
+            }
+          }
+          releaseOpenCLObjects();
+          continue;
+        }
+
+        if (openclShouldFail(CERBERUS_OPENCL_FAIL_KERNEL_CREATE)) {
+          err = CL_OUT_OF_HOST_MEMORY;
+          kernel = NULL;
+        } else {
+          kernel = clCreateKernel(program, "brute_force_universal", &err);
+        }
+        if (err != CL_SUCCESS || !kernel) {
+          releaseOpenCLObjects();
+          continue;
+        }
+
+        if (!g_opencl_quiet) {
+          std::cout << "\x1b[1;32m[OpenCL] GPU detectada e pronta.\x1b[0m\n";
+        }
+        return 1;
       }
-      return 1;
     }
   }
 
@@ -750,11 +865,11 @@ extern "C" int launch_opencl_brute_force(const char *charset,
                                          int hashType, const char *salt,
                                          unsigned long long *attempts_out) {
   cl_int err;
+  if (result) result[0] = '\0';
+  if (attempts_out) *attempts_out = 0;
   if (!context || !command_queue || !kernel || !charset || !target ||
       !result || !should_stop || max_len < 1)
     return 0;
-  result[0] = '\0';
-  if (attempts_out) *attempts_out = 0;
   int charsetLen = static_cast<int>(std::strlen(charset));
   if (charsetLen < 1) return 0;
   int saltLen = salt ? static_cast<int>(std::strlen(salt)) : 0;
@@ -806,23 +921,27 @@ extern "C" int launch_opencl_brute_force(const char *charset,
     return 0;
   };
 
-  d_charset = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
-                             charsetLen + 1, (void *)charset, &err);
+  d_charset = createOpenCLBuffer(
+      context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, charsetLen + 1,
+      (void *)charset, &err);
   if (err != CL_SUCCESS || !d_charset) return fail();
-  d_target = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
-                            256, (void *)lowerTarget, &err);
+  d_target = createOpenCLBuffer(
+      context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, 256,
+      (void *)lowerTarget, &err);
   if (err != CL_SUCCESS || !d_target) return fail();
-  d_salt = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
-                          saltLen + 1, (void *)(salt ? salt : ""), &err);
+  d_salt = createOpenCLBuffer(
+      context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, saltLen + 1,
+      (void *)(salt ? salt : ""), &err);
   if (err != CL_SUCCESS || !d_salt) return fail();
-  d_found = clCreateBuffer(context, CL_MEM_READ_WRITE, sizeof(int), NULL, &err);
+  d_found = createOpenCLBuffer(context, CL_MEM_READ_WRITE, sizeof(int), NULL,
+                               &err);
   if (err != CL_SUCCESS || !d_found) return fail();
-  d_result = clCreateBuffer(context, CL_MEM_WRITE_ONLY, 256, NULL, &err);
+  d_result = createOpenCLBuffer(context, CL_MEM_WRITE_ONLY, 256, NULL, &err);
   if (err != CL_SUCCESS || !d_result) return fail();
 
   int initialFound = 0;
-  err = clEnqueueWriteBuffer(command_queue, d_found, CL_TRUE, 0, sizeof(int),
-                             &initialFound, 0, NULL, NULL);
+  err = writeOpenCLBuffer(command_queue, d_found, CL_TRUE, 0, sizeof(int),
+                          &initialFound);
   if (err != CL_SUCCESS) return fail();
 
   size_t global_item_size = 1048576; // 1M threads per batch
@@ -870,18 +989,18 @@ extern "C" int launch_opencl_brute_force(const char *charset,
       cl_ulong cl_total = (cl_ulong)totalCombinations;
       cl_ulong cl_batch_size = (cl_ulong)actual_batch_size;
 
-      err = clSetKernelArg(kernel, 0, sizeof(cl_mem), &d_charset);
-      err |= clSetKernelArg(kernel, 1, sizeof(int), &charsetLen);
-      err |= clSetKernelArg(kernel, 2, sizeof(int), &len);
-      err |= clSetKernelArg(kernel, 3, sizeof(cl_ulong), &cl_offset);
-      err |= clSetKernelArg(kernel, 4, sizeof(cl_ulong), &cl_total);
-      err |= clSetKernelArg(kernel, 5, sizeof(cl_mem), &d_target);
-      err |= clSetKernelArg(kernel, 6, sizeof(int), &hashType);
-      err |= clSetKernelArg(kernel, 7, sizeof(cl_mem), &d_salt);
-      err |= clSetKernelArg(kernel, 8, sizeof(int), &saltLen);
-      err |= clSetKernelArg(kernel, 9, sizeof(cl_mem), &d_found);
-      err |= clSetKernelArg(kernel, 10, sizeof(cl_mem), &d_result);
-      err |= clSetKernelArg(kernel, 11, sizeof(cl_ulong), &cl_batch_size);
+      err = setOpenCLKernelArg(kernel, 0, sizeof(cl_mem), &d_charset);
+      err |= setOpenCLKernelArg(kernel, 1, sizeof(int), &charsetLen);
+      err |= setOpenCLKernelArg(kernel, 2, sizeof(int), &len);
+      err |= setOpenCLKernelArg(kernel, 3, sizeof(cl_ulong), &cl_offset);
+      err |= setOpenCLKernelArg(kernel, 4, sizeof(cl_ulong), &cl_total);
+      err |= setOpenCLKernelArg(kernel, 5, sizeof(cl_mem), &d_target);
+      err |= setOpenCLKernelArg(kernel, 6, sizeof(int), &hashType);
+      err |= setOpenCLKernelArg(kernel, 7, sizeof(cl_mem), &d_salt);
+      err |= setOpenCLKernelArg(kernel, 8, sizeof(int), &saltLen);
+      err |= setOpenCLKernelArg(kernel, 9, sizeof(cl_mem), &d_found);
+      err |= setOpenCLKernelArg(kernel, 10, sizeof(cl_mem), &d_result);
+      err |= setOpenCLKernelArg(kernel, 11, sizeof(cl_ulong), &cl_batch_size);
       if (err != CL_SUCCESS) return fail();
 
       size_t current_batch_size = actual_batch_size;
@@ -890,9 +1009,8 @@ extern "C" int launch_opencl_brute_force(const char *charset,
         current_batch_size =
             ((current_batch_size / local_item_size) + 1) * local_item_size;
 
-      err = clEnqueueNDRangeKernel(command_queue, kernel, 1, NULL,
-                                   &current_batch_size, &local_item_size, 0,
-                                   NULL, NULL);
+      err = submitOpenCLKernel(command_queue, kernel, 1, &current_batch_size,
+                               &local_item_size);
       if (err != CL_SUCCESS) return fail();
       const unsigned long long processed_to = offset + actual_batch_size;
 
@@ -981,14 +1099,14 @@ extern "C" int launch_opencl_brute_force(const char *charset,
       }
 
       int h_found = 0;
-      err = clEnqueueReadBuffer(command_queue, d_found, CL_TRUE, 0, sizeof(int),
-                                &h_found, 0, NULL, NULL);
+      err = readOpenCLBuffer(command_queue, d_found, sizeof(int), &h_found,
+                             CERBERUS_OPENCL_FAIL_FOUND_READ);
       if (err != CL_SUCCESS) return fail();
       if (attempts_out) *attempts_out += actual_batch_size;
       if (h_found) {
-        err = clEnqueueReadBuffer(command_queue, d_result, CL_TRUE, 0,
-                                  static_cast<size_t>(len) + 1,
-                                  result, 0, NULL, NULL);
+        err = readOpenCLBuffer(command_queue, d_result,
+                               static_cast<size_t>(len) + 1, result,
+                               CERBERUS_OPENCL_FAIL_RESULT_READ);
         if (err != CL_SUCCESS) return fail();
         result[len] = '\0';
         goto cleanup;
@@ -1029,28 +1147,34 @@ extern "C" void launch_opencl_hash_calc(const char *input, char *output_hex,
   cl_mem d_input = NULL;
   cl_mem d_output = NULL;
   cl_kernel calc_kernel = NULL;
-  d_input = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR,
-                           inputLen + 1, (void *)input, &err);
+  d_input = createOpenCLBuffer(
+      context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, inputLen + 1,
+      (void *)input, &err);
   if (err != CL_SUCCESS || !d_input) goto cleanup_hash_calc;
-  d_output = clCreateBuffer(context, CL_MEM_WRITE_ONLY, 129, NULL, &err);
+  d_output = createOpenCLBuffer(context, CL_MEM_WRITE_ONLY, 129, NULL, &err);
   if (err != CL_SUCCESS || !d_output) goto cleanup_hash_calc;
-  calc_kernel = clCreateKernel(program, "hash_calculator_universal", &err);
+  if (openclShouldFail(CERBERUS_OPENCL_FAIL_KERNEL_CREATE)) {
+    err = CL_OUT_OF_HOST_MEMORY;
+    calc_kernel = NULL;
+  } else {
+    calc_kernel = clCreateKernel(program, "hash_calculator_universal", &err);
+  }
   if (err != CL_SUCCESS || !calc_kernel) goto cleanup_hash_calc;
 
-  if (clSetKernelArg(calc_kernel, 0, sizeof(cl_mem), &d_input) != CL_SUCCESS ||
-      clSetKernelArg(calc_kernel, 1, sizeof(int), &len) != CL_SUCCESS ||
-      clSetKernelArg(calc_kernel, 2, sizeof(int), &hashType) != CL_SUCCESS ||
-      clSetKernelArg(calc_kernel, 3, sizeof(cl_mem), &d_output) != CL_SUCCESS)
+  if (setOpenCLKernelArg(calc_kernel, 0, sizeof(cl_mem), &d_input) != CL_SUCCESS ||
+      setOpenCLKernelArg(calc_kernel, 1, sizeof(int), &len) != CL_SUCCESS ||
+      setOpenCLKernelArg(calc_kernel, 2, sizeof(int), &hashType) != CL_SUCCESS ||
+      setOpenCLKernelArg(calc_kernel, 3, sizeof(cl_mem), &d_output) != CL_SUCCESS)
     goto cleanup_hash_calc;
 
   {
     const size_t global_item_size = 1;
-    if (clEnqueueNDRangeKernel(command_queue, calc_kernel, 1, NULL,
-                               &global_item_size, NULL, 0, NULL, NULL) != CL_SUCCESS ||
-        clFinish(command_queue) != CL_SUCCESS ||
-        clEnqueueReadBuffer(command_queue, d_output, CL_TRUE, 0,
-                            digestLength + 1,
-                            output_hex, 0, NULL, NULL) != CL_SUCCESS) {
+    if (submitOpenCLKernel(command_queue, calc_kernel, 1, &global_item_size,
+                           NULL) != CL_SUCCESS ||
+        finishOpenCLQueue(command_queue) != CL_SUCCESS ||
+        readOpenCLBuffer(command_queue, d_output, digestLength + 1,
+                         output_hex,
+                         CERBERUS_OPENCL_FAIL_RESULT_READ) != CL_SUCCESS) {
       output_hex[0] = '\0';
     } else {
       output_hex[digestLength] = '\0';

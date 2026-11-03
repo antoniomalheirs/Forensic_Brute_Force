@@ -1,0 +1,37 @@
+name: Coverage and backend failure tests
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  instrumented-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+
+    - name: Install GCC coverage and PoCL
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc g++ gcovr pocl-opencl-icd ocl-icd-libopencl1
+
+    - name: Run injected-failure suite and collect line/branch coverage
+      run: timeout 17m bash tests/run_coverage.sh
+
+    - name: Upload line and branch coverage report
+      if: always()
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: cerberus-coverage-report
+        path: |
+          build/.cache/coverage/report/
+        if-no-files-found: warn
