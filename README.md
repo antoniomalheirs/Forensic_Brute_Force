@@ -48,7 +48,7 @@ Download the Windows release assets from [GitHub Releases](https://github.com/an
 
 ### Build from source
 
-Source builds require Windows x64 and Visual Studio 2022 C++ x64 build tools. CUDA Toolkit 12.x is optional and is needed only to compile CUDA support; running CUDA also requires a compatible NVIDIA driver. OpenCL support requires a compatible OpenCL runtime/driver on the target machine.
+Source builds require Windows x64 and Visual Studio 2022 C++ x64 build tools. CUDA Toolkit 12.9.x is recommended for CUDA builds targeting Pascal GPUs such as the GTX 1070; CUDA Toolkit 13 no longer supports compiling for Pascal. CUDA is optional for CPU/OpenCL-only builds, and running CUDA also requires a compatible NVIDIA driver. OpenCL support requires a compatible OpenCL runtime/driver on the target machine.
 
 ~~~powershell
 .\setup.bat --build        # Detect this machine and build
@@ -145,7 +145,7 @@ Baixe os arquivos da versão para Windows em [GitHub Releases](https://github.co
 
 `setup.bat` verifica o executável existente e mostra o motor, o dispositivo e os arquivos de dados detectados. No checkout do código-fonte, compila o CERBERUS quando o executável ainda não existe.
 
-Para compilar do código-fonte, é necessário Windows x64 e Visual Studio 2022 com ferramentas C++ x64. O CUDA Toolkit 12.x é opcional e só é necessário para compilar suporte CUDA; para executar com CUDA, também é necessário um driver NVIDIA compatível. Para usar OpenCL, o computador precisa de runtime/driver compatível.
+Para compilar do código-fonte, é necessário Windows x64 e Visual Studio 2022 com ferramentas C++ x64. O CUDA Toolkit 12.9.x é recomendado para builds CUDA destinados a GPUs Pascal, como a GTX 1070; o CUDA Toolkit 13 deixou de compilar para Pascal. CUDA é opcional em builds somente CPU/OpenCL; para executar com CUDA, também é necessário um driver NVIDIA compatível. Para usar OpenCL, o computador precisa de runtime/driver compatível.
 
 ~~~powershell
 .\setup.bat --build        # Detecta este computador e compila
