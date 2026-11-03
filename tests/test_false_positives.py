@@ -120,5 +120,3 @@ class FalsePositiveTests(CerberusCase):
         self.assertEqual(result["status"], "exhausted", result)
         self.assertIsNone(result.get("plaintext"), result)
         self.assertNotEqual(completed.returncode, 0)
-
-\n

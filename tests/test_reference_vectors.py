@@ -315,5 +315,3 @@ class IndependentReferenceTests(CerberusCase):
         self.assertEqual(second_result["status"], "cached", second_result)
         self.assertIsNone(second_result["plaintext"])
         self.assertEqual(second_result["plaintext_base64"], "/w==")
-
-\n

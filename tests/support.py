@@ -169,5 +169,3 @@ class CerberusCase(unittest.TestCase):
             args.extend(["--wordlist", "wordlist.txt"])
         args.extend(extra)
         return self.invoke_json(*args, timeout=timeout)
-
-\n

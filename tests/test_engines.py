@@ -228,5 +228,3 @@ class EngineCorrectnessTests(CerberusCase):
         self.assertEqual(result["status"], "unsupported", result)
         self.assertIsNone(result.get("plaintext"), result)
         self.assertIn("opencl", result["engine"].lower())
-
-\n

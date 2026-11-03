@@ -537,5 +537,3 @@ class WorkflowTests(CerberusCase):
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
         self.assertIn("11 PASS", stripped)
         self.assertIn("TOTAL: 11", stripped)
-
-\n
