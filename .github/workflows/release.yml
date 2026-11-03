@@ -59,7 +59,7 @@ jobs:
         echo [CUDA] Compiling GPU Kernels...
         "%CUDA_PATH%\bin\nvcc.exe" --version
         if errorlevel 1 exit /b 1
-        "%CUDA_PATH%\bin\nvcc.exe" -O3 -allow-unsupported-compiler -arch=sm_61 -Xcompiler=/MT -c "src\algorithms\gpu_kernels.cu" -o "gpu_kernels.obj" -Idependencies\opencl\include -I"%CUDA_PATH%\include"
+        "%CUDA_PATH%\bin\nvcc.exe" -O3 -allow-unsupported-compiler -arch=all -Xcompiler=/MT -c "src\algorithms\gpu_kernels.cu" -o "gpu_kernels.obj" -Idependencies\opencl\include -I"%CUDA_PATH%\include"
         if errorlevel 1 (
           echo [ERROR] CUDA kernel compilation failed; refusing to publish a CPU/OpenCL-only release.
           exit /b 1
