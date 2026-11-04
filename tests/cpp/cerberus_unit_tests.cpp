@@ -306,10 +306,10 @@ void testCliHelpersAndCounters() {
 }
 
 void testExplicitGpuFallbackGuard() {
-  const ComputeType previousEngine = globalCompute;
-  const bool previousExplicitSelection = globalEngineExplicitlySelected;
-  const bool previousQuiet = globalQuiet;
-  const bool previousJson = globalJson;
+  const ComputeType previousAutoEngine = globalCompute;
+  const bool previousAutoExplicitSelection = globalEngineExplicitlySelected;
+  const bool previousAutoQuiet = globalQuiet;
+  const bool previousAutoJson = globalJson;
   auto expectRejected = [](ComputeType engine, HashType type,
                            const std::string &target,
                            const std::string &charset, int maxLength,
@@ -377,10 +377,10 @@ void testExplicitGpuFallbackGuard() {
                  "non-CUDA build rejects explicit CUDA without fallback");
 #endif
 
-  globalCompute = previousEngine;
-  globalEngineExplicitlySelected = previousExplicitSelection;
-  globalQuiet = previousQuiet;
-  globalJson = previousJson;
+  globalCompute = previousAutoEngine;
+  globalEngineExplicitlySelected = previousAutoExplicitSelection;
+  globalQuiet = previousAutoQuiet;
+  globalJson = previousAutoJson;
   globalEngineFailure.clear();
 }
 
@@ -461,6 +461,56 @@ void testMutationAndPotfileHelpers() {
   writeJsonTextOrBase64(json, "plaintext", std::string("\xFF", 1));
   check(json.str() == "\"plaintext\": null, \"plaintext_base64\": \"/w==\"",
         "JSON binary plaintext fallback");
+}
+
+void testHashMatrixOutputFormats() {
+  const bool previousQuiet = globalQuiet;
+  const bool previousJson = globalJson;
+  auto capture = [](bool quiet, bool json, const std::string &input) {
+    globalQuiet = quiet;
+    globalJson = json;
+    std::ostringstream output;
+    std::streambuf *previousOutput = std::cout.rdbuf(output.rdbuf());
+    generateAndDisplayHashes(input, "matrix-key");
+    std::cout.rdbuf(previousOutput);
+    return output.str();
+  };
+
+  const std::string quiet = capture(true, false, "abc");
+  check(quiet.find("md5:900150983cd24fb0d6963f7d28e17f72") !=
+            std::string::npos &&
+            quiet.find("ntlm:") != std::string::npos &&
+            quiet.find("pbkdf2-sha1:") != std::string::npos,
+        "quiet hash matrix reports standard, NTLM, and PBKDF2 hashes");
+  const std::string json = capture(false, true, "abc");
+  check(json.rfind("{", 0) == 0 &&
+            json.find("\"plaintext\": \"abc\"") != std::string::npos &&
+            json.find("\"hmac_key\": \"matrix-key\"") !=
+                std::string::npos &&
+            json.find("\"sha512\":") != std::string::npos,
+        "JSON hash matrix includes encoded inputs and digest fields");
+  const std::string human = capture(false, false, "abc");
+  check(human.find("[MATRIZ CRIPTOGRAFICA FORENSE]") != std::string::npos &&
+            human.find("HMAC-SHA256:") != std::string::npos,
+        "human hash matrix displays the formatted digest report");
+
+  const std::string invalidUtf8(1, static_cast<char>(0xFF));
+  const std::string quietInvalid = capture(true, false, invalidUtf8);
+  check(quietInvalid.find("ntlm:[INVALID_UTF8]") != std::string::npos,
+        "quiet hash matrix marks invalid UTF-8 NTLM input");
+  const std::string jsonInvalid = capture(false, true, invalidUtf8);
+  check(jsonInvalid.find("\"plaintext_base64\": \"/w==\"") !=
+            std::string::npos &&
+            jsonInvalid.find("\"ntlm\": null") != std::string::npos &&
+            jsonInvalid.find("\"ntlm_error\":") != std::string::npos,
+        "JSON hash matrix preserves binary input and explains NTLM rejection");
+  const std::string humanInvalid = capture(false, false, invalidUtf8);
+  check(humanInvalid.find("indisponivel: entrada nao e UTF-8 valido") !=
+            std::string::npos,
+        "human hash matrix explains invalid UTF-8 NTLM input");
+
+  globalQuiet = previousQuiet;
+  globalJson = previousJson;
 }
 
 void testStreamsAndBatchFiles() {
@@ -757,6 +807,37 @@ void testOpenCLFaultInjection() {
     return;
   }
   check(true, "OpenCL recovers after initialization fault injection");
+#if !defined(ENABLE_CUDA)
+  const ComputeType previousAutoEngine = globalCompute;
+  const bool previousAutoExplicitSelection = globalEngineExplicitlySelected;
+  const bool previousAutoQuiet = globalQuiet;
+  const bool previousAutoJson = globalJson;
+  globalQuiet = true;
+  globalJson = true;
+  globalCompute = ComputeType::CPU;
+  globalEngineExplicitlySelected = true;
+  initHardwareAuto();
+  check(globalCompute == ComputeType::OPENCL &&
+            !globalEngineExplicitlySelected,
+        "automatic hardware setup selects an available OpenCL backend");
+  cleanupOpenCL();
+
+  cerberusOpenCLTestFailAfter(CERBERUS_OPENCL_FAIL_LIBRARY_LOAD, 0);
+  globalCompute = ComputeType::OPENCL;
+  globalEngineExplicitlySelected = true;
+  initHardwareAuto();
+  cerberusOpenCLTestResetFault();
+  check(globalCompute == ComputeType::CPU &&
+            !globalEngineExplicitlySelected,
+        "automatic hardware setup falls back to CPU when OpenCL initialization fails");
+  check(initOpenCL() == 1,
+        "OpenCL runtime reinitializes after automatic detection failure");
+  globalCompute = previousAutoEngine;
+  globalEngineExplicitlySelected = previousAutoExplicitSelection;
+  globalQuiet = previousAutoQuiet;
+  globalJson = previousAutoJson;
+#endif
+
   const std::string target = sha256("7");
   auto expectExecutionFailure = [&](int fault, int skip,
                                     unsigned long long expectedAttempts,
@@ -1040,6 +1121,7 @@ int main() {
   testCliHelpersAndCounters();
   testExplicitGpuFallbackGuard();
   testMutationAndPotfileHelpers();
+  testHashMatrixOutputFormats();
   testStreamsAndBatchFiles();
   testOptionalGpuKernelBoundaries();
 #if defined(CERBERUS_TESTING)
