@@ -804,6 +804,60 @@ void testOpenCLFaultInjection() {
   expectExecutionFailure(CERBERUS_OPENCL_FAIL_RESULT_READ, 0, 1,
                          "candidate readback");
 
+  const ComputeType previousEngine = globalCompute;
+  const bool previousExplicitSelection = globalEngineExplicitlySelected;
+  const bool previousQuiet = globalQuiet;
+  const bool previousJson = globalJson;
+  const std::string previousEngineFailure = globalEngineFailure;
+  auto makeConfig = [](const std::string &target) {
+    Config config;
+    config.type = HashType::SHA256;
+    config.target = target;
+    config.targetHash = target;
+    config.charset = "7";
+    config.maxLength = 1;
+    return config;
+  };
+  globalQuiet = true;
+  globalJson = true;
+  globalCompute = ComputeType::OPENCL;
+  globalEngineExplicitlySelected = false;
+  globalEngineFailure.clear();
+  const Config successConfig = makeConfig(sha256("7"));
+  check(runParallelBruteForce(successConfig, false, nullptr, false) &&
+            crackedPassword == "7" && globalCompute == ComputeType::OPENCL,
+        "OpenCL orchestrator returns and validates a found candidate");
+  const Config exhaustedConfig = makeConfig(sha256("9"));
+  check(!runParallelBruteForce(exhaustedConfig, false, nullptr, false) &&
+            !found && globalCompute == ComputeType::OPENCL,
+        "OpenCL orchestrator reports an exhausted range without fallback");
+
+  cerberusOpenCLTestFailAfter(CERBERUS_OPENCL_FAIL_KERNEL_SUBMIT, 0);
+  const bool recoveredByCpu =
+      runParallelBruteForce(successConfig, false, nullptr, false);
+  cerberusOpenCLTestResetFault();
+  check(recoveredByCpu && crackedPassword == "7" &&
+            globalCompute == ComputeType::CPU,
+        "implicit OpenCL execution failure restarts safely on CPU");
+
+  globalCompute = ComputeType::OPENCL;
+  globalEngineExplicitlySelected = true;
+  globalEngineFailure.clear();
+  cerberusOpenCLTestFailAfter(CERBERUS_OPENCL_FAIL_KERNEL_SUBMIT, 0);
+  const bool explicitFailureRecovered =
+      runParallelBruteForce(successConfig, false, nullptr, false);
+  cerberusOpenCLTestResetFault();
+  check(!explicitFailureRecovered &&
+            globalEngineFailure.find("execucao OpenCL falhou") !=
+                std::string::npos &&
+            globalCompute == ComputeType::OPENCL,
+        "explicit OpenCL execution failure never changes to CPU");
+  globalCompute = previousEngine;
+  globalEngineExplicitlySelected = previousExplicitSelection;
+  globalQuiet = previousQuiet;
+  globalJson = previousJson;
+  globalEngineFailure = previousEngineFailure;
+
   char hashOutput[129] = "stale";
   cerberusOpenCLTestFailAfter(CERBERUS_OPENCL_FAIL_KERNEL_CREATE, 0);
   launch_opencl_hash_calc("abc", hashOutput, 2);
