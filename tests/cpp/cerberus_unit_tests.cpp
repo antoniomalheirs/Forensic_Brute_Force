@@ -543,15 +543,18 @@ void testAutoExecuteFastPaths() {
     AttackResult result;
     std::string output;
   };
+  bool quietMode = true;
+  bool jsonMode = false;
+  bool verboseMode = false;
   auto invoke = [&](const std::string &target, const std::string &salt,
                     int charsetId, int maxLength, bool skipDictionary,
                     int algorithmId, const std::string &wordlist,
                     bool disablePotfile, bool requireHash,
                     bool saltWasProvided, ComputeType engine,
                     bool explicitEngine) {
-    globalQuiet = true;
-    globalJson = false;
-    globalVerbose = false;
+    globalQuiet = quietMode;
+    globalJson = jsonMode;
+    globalVerbose = verboseMode;
     globalCompute = engine;
     globalEngineExplicitlySelected = explicitEngine;
     globalEngineFailure.clear();
@@ -606,12 +609,32 @@ void testAutoExecuteFastPaths() {
             wpa3.result.type == HashType::WPA3_SAE,
         "auto attack clearly rejects passive WPA3 SAE as an offline verifier");
 
+  quietMode = false;
+  jsonMode = true;
+  const auto jsonWpa3 = invoke(
+      "capture-placeholder", "", 1, 1, true, 6, "", true, false, false,
+      ComputeType::CPU, false);
+  check(jsonWpa3.output.find("\"status\": \"unsupported\"") !=
+            std::string::npos &&
+            jsonWpa3.output.find("WPA3") != std::string::npos,
+        "auto attack emits structured JSON for unsupported WPA3 captures");
+
   const auto base64 = invoke(
       "cGFzcw==", "", 1, 1, true, 106, "", true, false, false,
       ComputeType::CPU, false);
   check(base64.result.success && base64.result.recoveredPass == "pass" &&
             base64.result.method == "Base64 Strict Decode",
         "auto attack strictly decodes a pinned Base64 target");
+  const auto jsonBase64 = invoke(
+      "cGFzcw==", "", 1, 1, true, 106, "", true, false, false,
+      ComputeType::CPU, false);
+  check(jsonBase64.output.find("\"status\": \"decoded\"") !=
+            std::string::npos &&
+            jsonBase64.output.find("\"plaintext\": \"pass\"") !=
+                std::string::npos,
+        "auto attack emits decoded Base64 plaintext as structured JSON");
+  jsonMode = false;
+  quietMode = true;
 
   const auto plaintext = fast("plain text input");
   check(plaintext.result.success &&
@@ -649,6 +672,53 @@ void testAutoExecuteFastPaths() {
             explicitSalt.result.salt == "external" &&
             explicitSalt.result.type == HashType::SALTED_MD5,
         "explicit CLI salt overrides inline salt text");
+
+  verboseMode = true;
+  const auto verboseCrack = invoke(
+      md5("7"), "", 1, 1, true, 100, "", true, true, false,
+      ComputeType::CPU, false);
+  check(verboseCrack.result.success &&
+            verboseCrack.output.find("[verbose] algorithm=MD5") !=
+                std::string::npos,
+        "auto attack verbose mode reports its selected pipeline configuration");
+  verboseMode = false;
+
+  quietMode = false;
+  const auto humanCrack = invoke(
+      md5("7"), "", 1, 1, true, 100, "", true, true, false,
+      ComputeType::CPU, false);
+  check(humanCrack.result.success &&
+            humanCrack.output.find("[CERBERUS FORENSIC PIPELINE]") !=
+                std::string::npos &&
+            humanCrack.output.find("SUCESSO: CREDENCIAL RECUPERADA") !=
+                std::string::npos,
+        "auto attack renders a human pipeline and successful recovery card");
+  quietMode = true;
+
+  const std::string cacheTarget = md5("cached");
+  check(writeBytes(root / "cracked_passwords.txt",
+                   "v3|" + cacheTarget + "||MD5|cached\n"),
+        "write verified cache fixture for automatic pipeline");
+  const auto cacheHit = invoke(
+      cacheTarget, "", 1, 1, true, 0, "", false, true, false,
+      ComputeType::CPU, false);
+  check(cacheHit.result.success && cacheHit.result.fromPotfile &&
+            cacheHit.result.recoveredPass == "cached" &&
+            cacheHit.result.method == "Potfile Cache" &&
+            cacheHit.result.attempts == 0,
+        "auto attack returns only a verified potfile entry without guessing");
+
+  const auto wordlistPath = root / "known-wordlist.txt";
+  check(writeBytes(wordlistPath, "7\n"),
+        "write deterministic wordlist fixture for automatic pipeline");
+  const auto wordlistHit = invoke(
+      md5("7"), "", 1, 1, false, 100, wordlistPath.string(), true, true,
+      false, ComputeType::CPU, false);
+  check(wordlistHit.result.success &&
+            wordlistHit.result.recoveredPass == "7" &&
+            wordlistHit.result.method == "Dicionário Forense + Mutações" &&
+            wordlistHit.result.engine == "CPU (Dictionary)",
+        "auto attack recovers an exact match from a selected wordlist");
 
   const auto saltedSha224 = invoke(
       sha224("value"), "pepper", 1, 1, true, 0, "", true, false, false,
@@ -707,6 +777,13 @@ void testAutoExecuteFastPaths() {
             unsupportedEngine.result.method == "Unsupported selected engine",
         "auto attack reports an explicitly selected unsupported GPU algorithm");
 
+  const auto wpa2MissingSsid = invoke(
+      std::string(64, '0'), "", 1, 1, true, 3, "", true, true, false,
+      ComputeType::CPU, false);
+  check(!wpa2MissingSsid.result.success &&
+            wpa2MissingSsid.result.method == "Incomplete WPA2 SSID",
+        "auto attack marks WPA2 searches without an SSID as incomplete");
+
   const auto missingWordlist = invoke(
       sha256("not-in-numeric-keyspace"), "", 1, 1, false, 0,
       (root / "missing-wordlist.txt").string(), true, true, false,
@@ -714,6 +791,26 @@ void testAutoExecuteFastPaths() {
   check(!missingWordlist.result.success &&
             missingWordlist.result.method == "Incomplete wordlist",
         "auto attack marks missing custom wordlists as incomplete");
+
+  quietMode = false;
+  jsonMode = true;
+  const auto jsonMissingWordlist = invoke(
+      sha256("not-in-numeric-keyspace"), "", 1, 1, false, 0,
+      (root / "missing-wordlist.txt").string(), true, true, false,
+      ComputeType::CPU, false);
+  check(jsonMissingWordlist.output.find("\"status\":\"incomplete\"") !=
+            std::string::npos &&
+            jsonMissingWordlist.output.find("wordlist") != std::string::npos,
+        "auto attack reports incomplete wordlist state as JSON");
+  const auto jsonMissingSsid = invoke(
+      std::string(64, '0'), "", 1, 1, true, 3, "", true, true, false,
+      ComputeType::CPU, false);
+  check(jsonMissingSsid.output.find("\"status\":\"incomplete\"") !=
+            std::string::npos &&
+            jsonMissingSsid.output.find("SSID is required") !=
+                std::string::npos,
+        "auto attack reports missing WPA2 SSID state as JSON");
+  jsonMode = false;
 
   std::filesystem::current_path(previousDirectory, filesystemError);
   check(!filesystemError, "restore working directory after auto-attack tests");
