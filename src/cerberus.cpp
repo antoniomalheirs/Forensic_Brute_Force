@@ -4664,6 +4664,9 @@ AttackResult autoExecuteAttack(const std::string &rawTarget, const std::string &
 // Multi-Hash Batch File Processing with Executive Summary Report
 bool readHashTargetLines(const std::string &filePath,
                          std::vector<std::string> &lines) {
+  // A failed read must not leave targets from an earlier file in a reused
+  // output vector. Parsed lines are committed only after complete validation.
+  lines.clear();
   try {
     std::vector<std::string> parsedLines;
     std::ifstream file;

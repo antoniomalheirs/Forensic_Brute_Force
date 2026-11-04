@@ -500,10 +500,23 @@ void testStreamsAndBatchFiles() {
         "UTF-8 BOM batch reader and Unicode path");
 
   const auto badUtf8Path = root / L"invalid-utf8.txt";
-  check(writeBytes(badUtf8Path, std::string("\xFF\n", 2)),
+  check(writeBytes(badUtf8Path, std::string("first\n\xFF\n", 8)),
         "write malformed UTF-8 batch fixture");
-  check(!readHashTargetLines(pathToUtf8(badUtf8Path), lines),
-        "batch reader rejects malformed UTF-8");
+  lines = {"stale target"};
+  check(!readHashTargetLines(pathToUtf8(badUtf8Path), lines) && lines.empty(),
+        "batch reader rejects malformed UTF-8 and clears stale targets");
+
+  const auto utf8ControlsPath = root / L"utf8-controls.txt";
+  check(writeBytes(utf8ControlsPath, "left\tright\n"),
+        "write UTF-8 batch fixture with an allowed tab");
+  check(readHashTargetLines(pathToUtf8(utf8ControlsPath), lines) &&
+            lines == std::vector<std::string>{"left\tright"},
+        "batch reader accepts horizontal tabs");
+  check(writeBytes(utf8ControlsPath, std::string("first\nsecond\x01", 13)),
+        "write UTF-8 batch fixture with a forbidden control byte");
+  lines = {"stale target"};
+  check(!readHashTargetLines(pathToUtf8(utf8ControlsPath), lines) && lines.empty(),
+        "batch reader rejects forbidden controls without preserving stale lines");
 
   const auto utf16Path = root / L"utf16-le.txt";
   const std::string utf16Le =
@@ -513,11 +526,57 @@ void testStreamsAndBatchFiles() {
             lines == std::vector<std::string>{"hi"},
         "UTF-16LE batch conversion");
 
+  const auto utf16BePath = root / L"utf16-be.txt";
+  const std::string utf16Be({
+      static_cast<char>(0xFE), static_cast<char>(0xFF), 0, 'A',
+      0, '\r', 0, 'B', 0, '\n', 0, 'C'});
+  check(writeBytes(utf16BePath, utf16Be), "write UTF-16BE batch fixture");
+  check(readHashTargetLines(pathToUtf8(utf16BePath), lines) &&
+            lines == std::vector<std::string>{"A", "B", "C"},
+        "UTF-16BE reader handles lone CR and pending next-unit input");
+
+  const auto surrogatePath = root / L"utf16-surrogate.txt";
+  const std::string validSurrogate({
+      static_cast<char>(0xFF), static_cast<char>(0xFE),
+      static_cast<char>(0x3D), static_cast<char>(0xD8),
+      static_cast<char>(0x00), static_cast<char>(0xDE)});
+  check(writeBytes(surrogatePath, validSurrogate),
+        "write UTF-16LE supplementary-plane fixture");
+  check(readHashTargetLines(pathToUtf8(surrogatePath), lines) &&
+            lines == std::vector<std::string>{"\xF0\x9F\x98\x80"},
+        "batch reader converts a valid UTF-16 surrogate pair to UTF-8");
+
+  const std::string unpairedHigh({
+      static_cast<char>(0xFF), static_cast<char>(0xFE),
+      static_cast<char>(0x3D), static_cast<char>(0xD8)});
+  check(writeBytes(surrogatePath, unpairedHigh),
+        "write UTF-16LE unpaired high-surrogate fixture");
+  lines = {"stale target"};
+  check(!readHashTargetLines(pathToUtf8(surrogatePath), lines) && lines.empty(),
+        "batch reader rejects an unpaired high surrogate and clears output");
+  const std::string unpairedLow({
+      static_cast<char>(0xFF), static_cast<char>(0xFE),
+      static_cast<char>(0x00), static_cast<char>(0xDE)});
+  check(writeBytes(surrogatePath, unpairedLow),
+        "write UTF-16LE unpaired low-surrogate fixture");
+  check(!readHashTargetLines(pathToUtf8(surrogatePath), lines),
+        "batch reader rejects an unpaired low surrogate");
+
+  const std::string utf16Control({
+      static_cast<char>(0xFF), static_cast<char>(0xFE),
+      static_cast<char>(0x01), static_cast<char>(0x00)});
+  check(writeBytes(surrogatePath, utf16Control),
+        "write UTF-16LE forbidden-control fixture");
+  check(!readHashTargetLines(pathToUtf8(surrogatePath), lines),
+        "batch reader rejects forbidden UTF-16 control characters");
+
   const auto truncatedPath = root / L"truncated-utf16.txt";
   check(writeBytes(truncatedPath, std::string("\xFF\xFE", 2) + "a"),
         "write truncated UTF-16 batch fixture");
+  lines = {"stale target"};
   check(!readHashTargetLines(pathToUtf8(truncatedPath), lines),
         "batch reader rejects truncated UTF-16 unit");
+  check(lines.empty(), "truncated UTF-16 read clears stale targets");
   cleanup();
 }
 
