@@ -513,6 +513,224 @@ void testHashMatrixOutputFormats() {
   globalJson = previousJson;
 }
 
+void testAutoExecuteFastPaths() {
+  const ComputeType previousEngine = globalCompute;
+  const bool previousEngineExplicit = globalEngineExplicitlySelected;
+  const bool previousQuiet = globalQuiet;
+  const bool previousJson = globalJson;
+  const bool previousVerbose = globalVerbose;
+  const std::string previousEngineFailure = globalEngineFailure;
+  const bool previousFound = found.load();
+  const std::string previousPassword = crackedPassword;
+  const std::string previousCrackedSalt = crackedSalt;
+  const long long previousAttempts = totalTentativas.load();
+  const auto previousDirectory = std::filesystem::current_path();
+  const auto unique = std::chrono::steady_clock::now().time_since_epoch().count();
+  const auto root = std::filesystem::temp_directory_path() /
+                    ("cerberus-auto-attack-" + std::to_string(unique));
+  std::error_code filesystemError;
+  std::filesystem::create_directories(root, filesystemError);
+  check(!filesystemError, "create isolated auto-attack test directory");
+  if (filesystemError) return;
+  std::filesystem::current_path(root, filesystemError);
+  check(!filesystemError, "enter isolated auto-attack test directory");
+  if (filesystemError) {
+    std::filesystem::remove_all(root, filesystemError);
+    return;
+  }
+
+  struct Invocation {
+    AttackResult result;
+    std::string output;
+  };
+  auto invoke = [&](const std::string &target, const std::string &salt,
+                    int charsetId, int maxLength, bool skipDictionary,
+                    int algorithmId, const std::string &wordlist,
+                    bool disablePotfile, bool requireHash,
+                    bool saltWasProvided, ComputeType engine,
+                    bool explicitEngine) {
+    globalQuiet = true;
+    globalJson = false;
+    globalVerbose = false;
+    globalCompute = engine;
+    globalEngineExplicitlySelected = explicitEngine;
+    globalEngineFailure.clear();
+    std::ostringstream output;
+    std::streambuf *previousOutput = std::cout.rdbuf(output.rdbuf());
+    std::streambuf *previousError = std::cerr.rdbuf(output.rdbuf());
+    Invocation invocation;
+    invocation.result = autoExecuteAttack(
+        target, salt, charsetId, maxLength, skipDictionary, algorithmId,
+        wordlist, disablePotfile, requireHash, saltWasProvided);
+    std::cout.rdbuf(previousOutput);
+    std::cerr.rdbuf(previousError);
+    invocation.output = output.str();
+    return invocation;
+  };
+  auto fast = [&](const std::string &target) {
+    return invoke(target, "", 1, 1, true, 0, "", true, false, false,
+                  ComputeType::CPU, false);
+  };
+
+  const auto empty = fast("");
+  check(!empty.result.success && empty.result.method == "Invalid target",
+        "auto attack rejects an empty target");
+
+  const std::string md5Digest = md5("7pepper");
+  const auto ambiguous = fast(md5Digest + ":" + md5("7"));
+  check(!ambiguous.result.success &&
+            ambiguous.result.method == "Invalid target" &&
+            ambiguous.result.target == md5Digest + ":" + md5("7"),
+        "auto attack rejects ambiguous inline salt orientation");
+
+  const auto unknownRequired = invoke(
+      "not-a-hash", "", 1, 1, true, 0, "", true, true, false,
+      ComputeType::CPU, false);
+  check(!unknownRequired.result.success &&
+            unknownRequired.result.method == "Invalid target",
+        "auto attack rejects unknown input when a hash is required");
+
+  const auto pinnedMalformed = invoke(
+      "bad", "", 1, 1, true, 100, "", true, false, false,
+      ComputeType::CPU, false);
+  check(!pinnedMalformed.result.success &&
+            pinnedMalformed.result.method == "Invalid target" &&
+            pinnedMalformed.result.type == HashType::MD5,
+        "auto attack rejects malformed digest for a pinned algorithm");
+
+  const auto wpa3 = invoke(
+      "capture-placeholder", "", 1, 1, true, 6, "", true, false, false,
+      ComputeType::CPU, false);
+  check(!wpa3.result.success &&
+            wpa3.result.method == "Unsupported real format" &&
+            wpa3.result.type == HashType::WPA3_SAE,
+        "auto attack clearly rejects passive WPA3 SAE as an offline verifier");
+
+  const auto base64 = invoke(
+      "cGFzcw==", "", 1, 1, true, 106, "", true, false, false,
+      ComputeType::CPU, false);
+  check(base64.result.success && base64.result.recoveredPass == "pass" &&
+            base64.result.method == "Base64 Strict Decode",
+        "auto attack strictly decodes a pinned Base64 target");
+
+  const auto plaintext = fast("plain text input");
+  check(plaintext.result.success &&
+            plaintext.result.recoveredPass == "plain text input" &&
+            plaintext.result.method == "Plaintext Hash Matrix",
+        "auto attack routes unclassified plaintext to the hash matrix");
+
+  const auto labeledInline = fast("md5:" + md5Digest + ":pepper");
+  check(labeledInline.result.success &&
+            labeledInline.result.recoveredPass == "7" &&
+            labeledInline.result.salt == "pepper" &&
+            labeledInline.result.type == HashType::SALTED_MD5,
+        "auto attack recovers a labeled digest:salt target");
+
+  const auto digestThenSalt = fast(md5Digest + ":pepper");
+  check(digestThenSalt.result.success &&
+            digestThenSalt.result.recoveredPass == "7" &&
+            digestThenSalt.result.salt == "pepper" &&
+            digestThenSalt.result.type == HashType::SALTED_MD5,
+        "auto attack recovers digest:salt inline format");
+
+  const std::string saltedSha256 = sha256("7pepper");
+  const auto saltThenDigest = fast("pepper:" + saltedSha256);
+  check(saltThenDigest.result.success &&
+            saltThenDigest.result.recoveredPass == "7" &&
+            saltThenDigest.result.salt == "pepper" &&
+            saltThenDigest.result.type == HashType::SALTED_SHA256,
+        "auto attack recovers salt:digest inline format");
+
+  const auto explicitSalt = invoke(
+      "md5:" + md5("7external") + ":inline", "external", 1, 1, true, 0,
+      "", true, false, true, ComputeType::CPU, false);
+  check(explicitSalt.result.success &&
+            explicitSalt.result.recoveredPass == "7" &&
+            explicitSalt.result.salt == "external" &&
+            explicitSalt.result.type == HashType::SALTED_MD5,
+        "explicit CLI salt overrides inline salt text");
+
+  const auto saltedSha224 = invoke(
+      sha224("value"), "pepper", 1, 1, true, 0, "", true, false, false,
+      ComputeType::CPU, false);
+  check(!saltedSha224.result.success &&
+            saltedSha224.result.method == "Invalid target" &&
+            saltedSha224.result.type == HashType::SHA224,
+        "auto attack rejects unsupported salted SHA-224");
+
+  const auto saltedCrc = invoke(
+      crc32("value"), "pepper", 1, 1, true, 99, "", true, false, false,
+      ComputeType::CPU, false);
+  check(!saltedCrc.result.success &&
+            saltedCrc.result.method == "Invalid target" &&
+            saltedCrc.result.type == HashType::CRC32,
+        "auto attack rejects salt for a non-salted checksum algorithm");
+
+  const auto malformedBcrypt = invoke(
+      "not-bcrypt", "", 1, 1, true, 7, "", true, false, false,
+      ComputeType::CPU, false);
+  check(!malformedBcrypt.result.success &&
+            malformedBcrypt.result.method == "Invalid target",
+        "auto attack rejects malformed bcrypt before searching");
+
+  std::string expensiveBcrypt =
+      "$2a$05$CCCCCCCCCCCCCCCCCCCCC.E5YPO9kmyuRGyh0XouQYb4YMJKvyOeW";
+  expensiveBcrypt.replace(4, 2, "31");
+  const auto bcryptCost = invoke(
+      expensiveBcrypt, "", 1, 1, true, 7, "", true, false, false,
+      ComputeType::CPU, false);
+  check(!bcryptCost.result.success &&
+            bcryptCost.result.method == "Invalid or unsupported bcrypt cost",
+        "auto attack rejects valid bcrypt hashes above its supported cost");
+
+  const std::string expensiveScrypt =
+      "$scrypt$ln=18,r=9,p=1$Y2VyYmVydXMtdGVzdC1zYWx0$"
+      "grAlGCwgqRElW7JIbCRO1LlMXTctjKj9aMeXcW9vRZk";
+  const auto scryptCost = invoke(
+      expensiveScrypt, "", 1, 1, true, 8, "", true, false, false,
+      ComputeType::CPU, false);
+  check(!scryptCost.result.success &&
+            scryptCost.result.method == "Invalid or unsupported scrypt cost",
+        "auto attack rejects valid scrypt PHC parameters above resource policy");
+
+  const auto longSsid = invoke(
+      std::string(64, '0'), std::string(33, 's'), 1, 1, true, 3, "", true,
+      false, true, ComputeType::CPU, false);
+  check(!longSsid.result.success &&
+            longSsid.result.method == "Invalid WPA2 SSID",
+        "auto attack rejects WPA2 SSIDs longer than 32 bytes");
+
+  const auto unsupportedEngine = invoke(
+      std::string(64, '0'), "ssid", 1, 1, true, 3, "", true, false, true,
+      ComputeType::OPENCL, true);
+  check(!unsupportedEngine.result.success &&
+            unsupportedEngine.result.method == "Unsupported selected engine",
+        "auto attack reports an explicitly selected unsupported GPU algorithm");
+
+  const auto missingWordlist = invoke(
+      sha256("not-in-numeric-keyspace"), "", 1, 1, false, 0,
+      (root / "missing-wordlist.txt").string(), true, true, false,
+      ComputeType::CPU, false);
+  check(!missingWordlist.result.success &&
+            missingWordlist.result.method == "Incomplete wordlist",
+        "auto attack marks missing custom wordlists as incomplete");
+
+  std::filesystem::current_path(previousDirectory, filesystemError);
+  check(!filesystemError, "restore working directory after auto-attack tests");
+  std::filesystem::remove_all(root, filesystemError);
+  check(!filesystemError, "remove isolated auto-attack test directory");
+  globalCompute = previousEngine;
+  globalEngineExplicitlySelected = previousEngineExplicit;
+  globalQuiet = previousQuiet;
+  globalJson = previousJson;
+  globalVerbose = previousVerbose;
+  globalEngineFailure = previousEngineFailure;
+  found = previousFound;
+  crackedPassword = previousPassword;
+  crackedSalt = previousCrackedSalt;
+  totalTentativas = previousAttempts;
+}
+
 void testStreamsAndBatchFiles() {
   std::istringstream universal("first\r\nsecond\rthird\nlast");
   std::string line;
@@ -1122,6 +1340,7 @@ int main() {
   testExplicitGpuFallbackGuard();
   testMutationAndPotfileHelpers();
   testHashMatrixOutputFormats();
+  testAutoExecuteFastPaths();
   testStreamsAndBatchFiles();
   testOptionalGpuKernelBoundaries();
 #if defined(CERBERUS_TESTING)
