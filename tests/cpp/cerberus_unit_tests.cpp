@@ -306,25 +306,81 @@ void testCliHelpersAndCounters() {
 }
 
 void testExplicitGpuFallbackGuard() {
-  Config config;
-  config.type = HashType::WPA2_PBKDF2;
-  config.target = std::string(64, '0');
-  config.saltProvided = true;
-  config.charset = "01";
-  config.maxLength = 1;
-
   const ComputeType previousEngine = globalCompute;
   const bool previousExplicitSelection = globalEngineExplicitlySelected;
-  globalCompute = ComputeType::OPENCL;
-  globalEngineExplicitlySelected = true;
-  globalEngineFailure.clear();
-  const bool recovered = runParallelBruteForce(config, false, nullptr, false);
-  check(!recovered, "explicit unsupported OpenCL algorithm is not recovered");
-  check(globalEngineFailure.find("algoritmo nao implementado no kernel OpenCL") !=
-            std::string::npos,
-        "explicit engine fallback guard records the reason");
+  const bool previousQuiet = globalQuiet;
+  const bool previousJson = globalJson;
+  auto expectRejected = [](ComputeType engine, HashType type,
+                           const std::string &target,
+                           const std::string &charset, int maxLength,
+                           const std::string &salt,
+                           const std::string &expectedReason,
+                           const char *testName) {
+    Config config;
+    config.type = type;
+    config.target = target;
+    config.salt = salt;
+    config.saltProvided = true;
+    config.charset = charset;
+    config.maxLength = maxLength;
+    globalCompute = engine;
+    globalEngineExplicitlySelected = true;
+    globalQuiet = true;
+    globalJson = false;
+    globalEngineFailure.clear();
+    const bool recovered = runParallelBruteForce(config, false, nullptr, false);
+    check(!recovered, testName);
+    check(globalEngineFailure.find(expectedReason) != std::string::npos,
+          "explicit GPU rejection reports its precise policy reason");
+  };
+
+  expectRejected(ComputeType::OPENCL, HashType::WPA2_PBKDF2,
+                 std::string(64, '0'), "01", 1, "test-ssid",
+                 "algoritmo nao implementado no kernel OpenCL",
+                 "explicit unsupported OpenCL algorithm is rejected");
+  expectRejected(ComputeType::CUDA, HashType::WPA2_PBKDF2,
+                 std::string(64, '0'), "01", 1, "test-ssid",
+                 "algoritmo nao implementado no kernel CUDA",
+                 "explicit unsupported CUDA algorithm is rejected");
+  expectRejected(ComputeType::OPENCL, HashType::SALTED_MD5,
+                 std::string(32, '0'), "01", 1, std::string("a\0b", 3),
+                 "salt contem byte NUL",
+                 "OpenCL rejects NUL salt without falling back");
+  expectRejected(ComputeType::CUDA, HashType::SALTED_MD5,
+                 std::string(32, '0'), "01", 1, std::string("a\0b", 3),
+                 "salt contem byte NUL",
+                 "CUDA rejects NUL salt without falling back");
+  expectRejected(ComputeType::OPENCL, HashType::MD5,
+                 std::string(32, '0'), "01", 120, "",
+                 "entrada excede o buffer seguro do kernel OpenCL",
+                 "OpenCL rejects inputs beyond its kernel buffer");
+  expectRejected(ComputeType::CUDA, HashType::MD5,
+                 std::string(32, '0'), "01", 120, "",
+                 "entrada excede o buffer seguro do kernel CUDA",
+                 "CUDA rejects inputs beyond its kernel buffer");
+  expectRejected(ComputeType::OPENCL, HashType::NTLM,
+                 std::string(32, '0'), "\xC3\xA9", 1, "",
+                 "kernel NTLM exige charset ASCII",
+                 "OpenCL rejects Unicode charset for NTLM");
+  expectRejected(ComputeType::CUDA, HashType::NTLM,
+                 std::string(32, '0'), "01", 60, "",
+                 "kernel NTLM exige charset ASCII",
+                 "CUDA rejects NTLM candidates above 59 bytes");
+  expectRejected(ComputeType::OPENCL, HashType::MD5,
+                 std::string(32, '0'), std::string(62, 'a'), 11, "",
+                 "64-bit keyspace/report limits",
+                 "OpenCL rejects keyspaces beyond its 64-bit counter");
+#if !defined(ENABLE_CUDA)
+  expectRejected(ComputeType::CUDA, HashType::MD5,
+                 std::string(32, '0'), "01", 1, "",
+                 "esta build nao inclui suporte CUDA",
+                 "non-CUDA build rejects explicit CUDA without fallback");
+#endif
+
   globalCompute = previousEngine;
   globalEngineExplicitlySelected = previousExplicitSelection;
+  globalQuiet = previousQuiet;
+  globalJson = previousJson;
   globalEngineFailure.clear();
 }
 
@@ -377,6 +433,29 @@ void testMutationAndPotfileHelpers() {
         "potfile algorithm lookup");
   check(inferLegacyPotfileType("deadbeef") == HashType::CRC32,
         "legacy potfile algorithm inference");
+  check(inferLegacyPotfileType(std::string(32, 'a')) == HashType::MD5,
+        "legacy potfile infers 32-character hexadecimal digest");
+  check(inferLegacyPotfileType(std::string(40, 'a')) == HashType::SHA1,
+        "legacy potfile infers 40-character hexadecimal digest");
+  check(inferLegacyPotfileType(std::string(56, 'a')) == HashType::SHA224,
+        "legacy potfile infers 56-character hexadecimal digest");
+  check(inferLegacyPotfileType(std::string(64, 'a')) == HashType::SHA256,
+        "legacy potfile resolves 64-character digest ambiguity consistently");
+  check(inferLegacyPotfileType(std::string(96, 'a')) == HashType::SHA384,
+        "legacy potfile infers 96-character hexadecimal digest");
+  check(inferLegacyPotfileType(std::string(128, 'a')) == HashType::SHA512,
+        "legacy potfile infers 128-character hexadecimal digest");
+  check(inferLegacyPotfileType("not-a-digest") == HashType::UNKNOWN,
+        "legacy potfile leaves unrecognized targets untyped");
+  check(saltedTypeForDigestLength(32) == HashType::SALTED_MD5 &&
+            saltedTypeForDigestLength(40) == HashType::SALTED_SHA1 &&
+            saltedTypeForDigestLength(64) == HashType::SALTED_SHA256 &&
+            saltedTypeForDigestLength(128) == HashType::SALTED_SHA512,
+        "salted digest lengths map to implemented hash types");
+  check(saltedTypeForDigestLength(56) == HashType::UNKNOWN &&
+            saltedTypeForDigestLength(96) == HashType::UNKNOWN &&
+            saltedTypeForDigestLength(0) == HashType::UNKNOWN,
+        "unsupported salted digest lengths remain unknown");
 
   std::ostringstream json;
   writeJsonTextOrBase64(json, "plaintext", std::string("\xFF", 1));
